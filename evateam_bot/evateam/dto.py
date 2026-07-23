@@ -87,27 +87,11 @@ def parse_person(raw: dict[str, Any]) -> Person:
     )
 
 
-def parse_task(
-    raw: dict[str, Any],
-    *,
-    base_url: str | None = None,
-    url_template: str = "{base}/task/{code}",
-) -> Task:
+def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
     status_type = raw.get("cache_status_type")
     status_name = _rel_field(raw.get("status")) or (status_type or "")
     task_id = str(raw.get("id") or "")
     code = raw.get("code")
-    list_code = _rel_field(raw.get("main_list"), "code")
-
-    url = None
-    if base_url and code:
-        # Если шаблону нужен код доски ({list}), а его нет — ссылку не строим.
-        if "{list}" in url_template and not list_code:
-            url = None
-        else:
-            url = url_template.format(
-                base=base_url.rstrip("/"), code=code, list=list_code or ""
-            )
 
     activity = raw.get("activity")
     is_active = True

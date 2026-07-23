@@ -34,11 +34,7 @@ class App:
             verify=settings.evateam_verify_ssl,
             proxy=proxy,
         )
-        tasks_api = EvaTeamTasks(
-            client,
-            base_url=settings.evateam_base_url,
-            url_template=settings.evateam_task_url_template,
-        )
+        tasks_api = EvaTeamTasks(client, base_url=settings.evateam_base_url)
 
         session_factory = make_session_factory(settings.db_path)
         repo = UserRepository(session_factory)

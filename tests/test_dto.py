@@ -32,7 +32,8 @@ def test_parse_task_with_nested_objects():
         "deadline": "2026-07-20T18:00:00",
         "priority": {"orderno": 2, "name": "Высокий"},
     }
-    task = dto.parse_task(raw, base_url="https://eva.example.ru")
+    url = "https://eva.example.ru/project/List/LBRD-1?obj=Task:PRJ-7"
+    task = dto.parse_task(raw, url=url)
     assert task.code == "PRJ-7"
     assert task.title == "Сделать отчёт"
     assert task.status_category is StatusCategory.IN_PROGRESS
@@ -40,7 +41,7 @@ def test_parse_task_with_nested_objects():
     assert task.deadline == datetime(2026, 7, 20, 18, 0)
     assert task.priority == 2
     assert task.is_active is True
-    assert task.url == "https://eva.example.ru/task/PRJ-7"
+    assert task.url == url
 
 
 def test_parse_task_uses_cache_status_type_when_no_status_object():
