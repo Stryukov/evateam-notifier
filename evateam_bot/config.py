@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic import Field
@@ -25,6 +26,21 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str = Field(default="")
+    # Прокси для доступа к api.telegram.org (корп-сеть). Пусто -> берём из
+    # окружения (HTTPS_PROXY/HTTP_PROXY). "none" -> без прокси (прямое соединение).
+    telegram_proxy: str = Field(default="")
+
+    def resolve_telegram_proxy(self) -> str | None:
+        raw = self.telegram_proxy.strip()
+        if raw.lower() == "none":
+            return None
+        if raw:
+            return raw
+        for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            value = os.environ.get(key)
+            if value:
+                return value
+        return None
 
     # Расписание
     timezone: str = Field(default="Europe/Moscow")

@@ -29,11 +29,14 @@ async def _main() -> None:
         await transport.start()
     logger.info("Бот запущен. Транспорты: %s", ", ".join(app.transports))
 
-    stop = asyncio.Event()
     try:
-        await stop.wait()  # работаем до отмены (Ctrl+C)
+        # Ждём завершения транспортов. Если поллинг упадёт (напр. нет доступа к
+        # api.telegram.org), исключение всплывёт здесь, а не потеряется в фоне.
+        await asyncio.gather(*(t.wait_closed() for t in app.transports.values()))
     except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover
         pass
+    except Exception:
+        logger.exception("Транспорт остановился из-за ошибки")
     finally:
         scheduler.shutdown(wait=False)
         for transport in app.transports.values():

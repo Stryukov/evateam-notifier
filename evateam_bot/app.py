@@ -40,7 +40,10 @@ class App:
         # Регистрация транспортов. Добавить MAX — просто ещё одна запись здесь.
         transports: dict[TransportName, BotTransport] = {}
         if settings.telegram_bot_token:
-            tg = TelegramTransport(settings.telegram_bot_token)
+            tg = TelegramTransport(
+                settings.telegram_bot_token,
+                proxy=settings.resolve_telegram_proxy(),
+            )
             transports[tg.name] = tg
 
         service = BotService(transports=transports, tasks_api=tasks_api, repo=repo)

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Protocol, runtime_checkable
 
@@ -38,6 +39,8 @@ class BotTransport(ABC):
 
     def __init__(self) -> None:
         self._handler: UpdateHandler | None = None
+        #: фоновая задача приёма событий (устанавливается в start())
+        self._polling_task: asyncio.Task | None = None
 
     def set_handler(self, handler: UpdateHandler) -> None:
         self._handler = handler
@@ -55,6 +58,11 @@ class BotTransport(ABC):
     @abstractmethod
     async def start(self) -> None:
         """Запустить приём событий (long polling / webhook)."""
+
+    async def wait_closed(self) -> None:
+        """Дождаться завершения приёма событий. Пробрасывает ошибку поллинга."""
+        if self._polling_task is not None:
+            await self._polling_task
 
     @abstractmethod
     async def stop(self) -> None:

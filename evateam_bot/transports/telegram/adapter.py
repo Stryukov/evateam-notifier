@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -24,9 +25,12 @@ from ..base import BotTransport
 class TelegramTransport(BotTransport):
     name = "telegram"
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, proxy: str | None = None) -> None:
         super().__init__()
-        self._bot = Bot(token=token)
+        # В корп-сети выход к api.telegram.org только через прокси; aiohttp
+        # (в отличие от httpx) сам прокси из окружения не берёт — задаём явно.
+        session = AiohttpSession(proxy=proxy) if proxy else None
+        self._bot = Bot(token=token, session=session)
         self._dp = Dispatcher()
         self._polling_task: asyncio.Task | None = None
         self._register_routes()
