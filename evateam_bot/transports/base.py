@@ -67,3 +67,6 @@ class BotTransport(ABC):
     @abstractmethod
     async def stop(self) -> None:
         """Остановить приём и освободить ресурсы."""
+
+    async def aclose(self) -> None:
+        """Освободить сетевые ресурсы без остановки поллинга (для one-off задач)."""

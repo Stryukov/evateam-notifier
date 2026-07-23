@@ -1,7 +1,13 @@
-"""Рендер доменных объектов в нейтральные сообщения (OutgoingMessage)."""
+"""Рендер доменных объектов в нейтральные сообщения (OutgoingMessage).
+
+Текст — лёгкий HTML-подмножество (`<b>`, `<a href>`): его понимает Telegram
+(parse_mode=HTML), а будущий MAX-адаптер при необходимости сконвертирует.
+Динамические данные (имена, названия задач) обязательно экранируются.
+"""
 
 from __future__ import annotations
 
+import html
 from datetime import datetime
 
 from .messages import Button, OutgoingMessage
@@ -11,12 +17,20 @@ from .models import Digest, Person, Task
 ACTION_CONFIRM_PREFIX = "confirm_link:"  # + person_id
 ACTION_REJECT = "reject_link"
 
+# эмодзи
+EMOJI_OVERDUE = "🔴"  # срок нарушен
+EMOJI_DEADLINE = "⏳"  # срок ещё не наступил
+
+
+def _esc(text: str) -> str:
+    return html.escape(text or "")
+
 
 def welcome_message() -> OutgoingMessage:
     return OutgoingMessage(
         text=(
             "👋 Привет! Я напоминаю о задачах из EvaTeam.\n\n"
-            "Чтобы начать, отправьте мне свой **email** или **логин** в EvaTeam — "
+            "Чтобы начать, отправьте мне свой <b>email</b> или <b>логин</b> в EvaTeam — "
             "я найду вашу учётную запись."
         )
     )
@@ -24,9 +38,9 @@ def welcome_message() -> OutgoingMessage:
 
 def confirm_person_message(person: Person) -> OutgoingMessage:
     ident = person.email or person.login or ""
-    tail = f" ({ident})" if ident else ""
+    tail = f" ({_esc(ident)})" if ident else ""
     return OutgoingMessage(
-        text=f"Нашёл: **{person.name}**{tail}\nЭто вы?",
+        text=f"Нашёл: <b>{_esc(person.name)}</b>{tail}\nЭто вы?",
         buttons=[
             [
                 Button(text="✅ Это я", action=f"{ACTION_CONFIRM_PREFIX}{person.id}"),
@@ -39,7 +53,7 @@ def confirm_person_message(person: Person) -> OutgoingMessage:
 def person_not_found_message(query: str) -> OutgoingMessage:
     return OutgoingMessage(
         text=(
-            f"Не нашёл пользователя по «{query}». "
+            f"Не нашёл пользователя по «{_esc(query)}». "
             "Проверьте email/логин и попробуйте ещё раз."
         )
     )
@@ -48,7 +62,7 @@ def person_not_found_message(query: str) -> OutgoingMessage:
 def linked_message(person: Person) -> OutgoingMessage:
     return OutgoingMessage(
         text=(
-            f"Готово! Вы привязаны как **{person.name}**.\n"
+            f"Готово! Вы привязаны как <b>{_esc(person.name)}</b>.\n"
             "Каждое утро я буду присылать план дня и напоминать о просроченных задачах. ✨"
         )
     )
@@ -60,37 +74,52 @@ def rejected_message() -> OutgoingMessage:
     )
 
 
-def _fmt_deadline(deadline: datetime | None) -> str:
-    if deadline is None:
-        return ""
+def _fmt_deadline(deadline: datetime) -> str:
     return deadline.strftime("%d.%m %H:%M")
 
 
-def _fmt_task_line(task: Task, *, show_deadline: bool = True) -> str:
-    code = f"[{task.code}] " if task.code else ""
-    line = f"• {code}{task.title}"
-    if show_deadline and task.deadline is not None:
-        line += f" — ⏳ {_fmt_deadline(task.deadline)}"
+def _code_html(task: Task) -> str:
+    """Код задачи как ссылка на таск-трекер (если известен URL)."""
+    if not task.code:
+        return ""
+    if task.url:
+        return f'<a href="{_esc(task.url)}">{_esc(task.code)}</a> '
+    return f"{_esc(task.code)} "
+
+
+def _fmt_task_line(task: Task, now: datetime) -> str:
+    line = f"• {_code_html(task)}{_esc(task.title)}"
+    if task.deadline is not None:
+        overdue = task.is_overdue(now)
+        emoji = EMOJI_OVERDUE if overdue else EMOJI_DEADLINE
+        stamp = _fmt_deadline(task.deadline)
+        stamp = f"<b>{stamp}</b>" if overdue else stamp
+        line += f" — {emoji} {stamp}"
     return line
 
 
-def digest_message(person: Person, digest: Digest) -> OutgoingMessage:
+def _section(title: str, tasks: list[Task], now: datetime) -> list[str]:
+    if not tasks:
+        return []
+    lines = ["", f"{title} ({len(tasks)}):"]
+    lines.extend(_fmt_task_line(t, now) for t in tasks)
+    return lines
+
+
+def digest_message(person: Person, digest: Digest, now: datetime | None = None) -> OutgoingMessage:
+    now = now or datetime.now()
     if digest.is_empty:
         return OutgoingMessage(text="🌅 Доброе утро! Активных задач на сегодня нет 🎉")
 
-    parts: list[str] = ["🌅 Доброе утро! Ваш план дня:"]
-    if digest.in_progress:
-        parts.append("")
-        parts.append(f"🔧 В работе ({len(digest.in_progress)}):")
-        parts.extend(_fmt_task_line(t) for t in digest.in_progress)
-    if digest.waiting:
-        parts.append("")
-        parts.append(f"⏸ Ожидают ({len(digest.waiting)}):")
-        parts.extend(_fmt_task_line(t) for t in digest.waiting)
+    parts = ["🌅 Доброе утро! Ваш план дня:"]
+    parts += _section("🔧 В работе", digest.in_progress, now)
+    parts += _section("🆕 Не начаты", digest.not_started, now)
+    parts += _section("⏳ Ждут подтверждения", digest.waiting, now)
     return OutgoingMessage(text="\n".join(parts))
 
 
-def overdue_message(person: Person, overdue: list[Task]) -> OutgoingMessage:
-    parts: list[str] = [f"⏰ Просроченные задачи ({len(overdue)}):", ""]
-    parts.extend(_fmt_task_line(t) for t in overdue)
+def overdue_message(person: Person, overdue: list[Task], now: datetime | None = None) -> OutgoingMessage:
+    now = now or datetime.now()
+    parts = [f"{EMOJI_OVERDUE} Просроченные задачи ({len(overdue)}):", ""]
+    parts.extend(_fmt_task_line(t, now) for t in overdue)
     return OutgoingMessage(text="\n".join(parts))

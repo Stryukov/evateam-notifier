@@ -55,15 +55,20 @@ class Task:
 
 @dataclass
 class Digest:
-    """«План дня» сотрудника: задачи в работе и ожидающие."""
+    """«План дня» сотрудника, разбитый по статусам задач."""
 
-    in_progress: list[Task] = field(default_factory=list)
-    waiting: list[Task] = field(default_factory=list)
+    in_progress: list[Task] = field(default_factory=list)  # IN_PROGRESS — в работе
+    not_started: list[Task] = field(default_factory=list)  # OPEN — не начаты (TODO)
+    waiting: list[Task] = field(default_factory=list)  # IN_REVIEW — ждут подтверждения
+
+    @property
+    def groups(self) -> list[list[Task]]:
+        return [self.in_progress, self.not_started, self.waiting]
 
     @property
     def is_empty(self) -> bool:
-        return not self.in_progress and not self.waiting
+        return all(not group for group in self.groups)
 
     @property
     def total(self) -> int:
-        return len(self.in_progress) + len(self.waiting)
+        return sum(len(group) for group in self.groups)

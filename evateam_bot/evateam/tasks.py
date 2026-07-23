@@ -46,9 +46,15 @@ def _extract_items(result: Any) -> list[dict[str, Any]]:
 class EvaTeamTasks:
     """Высокоуровневые операции над задачами/людьми поверх JSON-RPC клиента."""
 
-    def __init__(self, client: EvaTeamClient, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        client: EvaTeamClient,
+        base_url: str | None = None,
+        url_template: str = "{base}/task/{code}",
+    ) -> None:
         self._client = client
         self._base_url = base_url
+        self._url_template = url_template
 
     async def find_person(self, query: str) -> list[Person]:
         """Найти пользователя(-ей) по email или логину (у реальных сотрудников login=email).
@@ -100,4 +106,7 @@ class EvaTeamTasks:
                 if task_id:
                     by_id[task_id] = item
 
-        return [parse_task(item, base_url=self._base_url) for item in by_id.values()]
+        return [
+            parse_task(item, base_url=self._base_url, url_template=self._url_template)
+            for item in by_id.values()
+        ]

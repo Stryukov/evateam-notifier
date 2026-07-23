@@ -116,7 +116,7 @@ class BotService:
                 if not fresh:
                     continue
                 person = Person(id=link.person_id, name=link.person_name)
-                message = formatting.overdue_message(person, fresh)
+                message = formatting.overdue_message(person, fresh, now)
                 await self._transport(link.transport).send_message(link.chat_id, message)
                 for task in fresh:
                     self._repo.mark_deadline_reminded(

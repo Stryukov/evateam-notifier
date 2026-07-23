@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     evateam_verify_ssl: str = Field(default="true")
     # admin_mode: сервис-аккаунт (в группе Admins) видит задачи всех сотрудников
     evateam_admin_mode: bool = Field(default=True)
+    # Шаблон ссылки на задачу в веб-интерфейсе EvaTeam ({base} и {code}).
+    evateam_task_url_template: str = Field(default="{base}/task/{code}")
 
     # Telegram
     telegram_bot_token: str = Field(default="")

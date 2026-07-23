@@ -19,22 +19,22 @@ def _sort_key(task: Task) -> tuple:
 
 
 def build_digest(tasks: list[Task]) -> Digest:
-    """Разложить активные задачи по категориям «в работе» и «ожидают»."""
+    """Разложить активные задачи по трём группам: в работе / не начаты / ждут подтверждения."""
     in_progress: list[Task] = []
+    not_started: list[Task] = []
     waiting: list[Task] = []
 
     for task in tasks:
         if not task.is_active:
             continue
-        if task.status_category is StatusCategory.DONE:
-            continue
         if task.status_category is StatusCategory.IN_PROGRESS:
             in_progress.append(task)
-        elif task.status_category in (StatusCategory.WAITING, StatusCategory.OPEN):
-            # «Ожидают / предстоит»: на проверке (IN_REVIEW) и открытые (OPEN).
-            waiting.append(task)
-        # UNKNOWN не попадает в «план дня».
+        elif task.status_category is StatusCategory.OPEN:
+            not_started.append(task)  # ещё не начаты (TODO)
+        elif task.status_category is StatusCategory.WAITING:
+            waiting.append(task)  # IN_REVIEW — ждут подтверждения
+        # DONE / UNKNOWN не попадают в «план дня».
 
-    in_progress.sort(key=_sort_key)
-    waiting.sort(key=_sort_key)
-    return Digest(in_progress=in_progress, waiting=waiting)
+    for group in (in_progress, not_started, waiting):
+        group.sort(key=_sort_key)
+    return Digest(in_progress=in_progress, not_started=not_started, waiting=waiting)

@@ -52,16 +52,23 @@ def _rel_id(value: Any) -> str | None:
     return None
 
 
+def _to_naive_local(dt: datetime) -> datetime:
+    """Привести tz-aware дату к наивной в локальной зоне (для однородных сравнений)."""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
 def parse_datetime(value: Any) -> datetime | None:
     if not value:
         return None
     if isinstance(value, datetime):
-        return value
+        return _to_naive_local(value)
     text = str(value).strip()
     # EvaTeam обычно ISO 8601; "Z" -> смещение.
     text = text.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(text)
+        return _to_naive_local(datetime.fromisoformat(text))
     except ValueError:
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
             try:
@@ -80,7 +87,12 @@ def parse_person(raw: dict[str, Any]) -> Person:
     )
 
 
-def parse_task(raw: dict[str, Any], *, base_url: str | None = None) -> Task:
+def parse_task(
+    raw: dict[str, Any],
+    *,
+    base_url: str | None = None,
+    url_template: str = "{base}/task/{code}",
+) -> Task:
     status_type = raw.get("cache_status_type")
     status_name = _rel_field(raw.get("status")) or (status_type or "")
     task_id = str(raw.get("id") or "")
@@ -88,7 +100,7 @@ def parse_task(raw: dict[str, Any], *, base_url: str | None = None) -> Task:
 
     url = None
     if base_url and code:
-        url = f"{base_url.rstrip('/')}/task/{code}"
+        url = url_template.format(base=base_url.rstrip("/"), code=code)
 
     activity = raw.get("activity")
     is_active = True
