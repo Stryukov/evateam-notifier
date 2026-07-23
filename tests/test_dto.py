@@ -5,11 +5,12 @@ from evateam_bot.evateam import dto
 
 
 def test_status_category_mapping():
-    assert dto.status_category_from_code("in_progress") is StatusCategory.IN_PROGRESS
-    assert dto.status_category_from_code("Waiting") is StatusCategory.WAITING
-    assert dto.status_category_from_code("done") is StatusCategory.DONE
-    assert dto.status_category_from_code("weird") is StatusCategory.UNKNOWN
-    assert dto.status_category_from_code(None) is StatusCategory.UNKNOWN
+    assert dto.status_category_from_type("IN_PROGRESS") is StatusCategory.IN_PROGRESS
+    assert dto.status_category_from_type("in_review") is StatusCategory.WAITING
+    assert dto.status_category_from_type("OPEN") is StatusCategory.OPEN
+    assert dto.status_category_from_type("CLOSED") is StatusCategory.DONE
+    assert dto.status_category_from_type("weird") is StatusCategory.UNKNOWN
+    assert dto.status_category_from_type(None) is StatusCategory.UNKNOWN
 
 
 def test_parse_datetime_variants():
@@ -25,6 +26,7 @@ def test_parse_task_with_nested_objects():
         "id": "CmfTask:1",
         "code": "PRJ-7",
         "name": "Сделать отчёт",
+        "cache_status_type": "IN_PROGRESS",
         "status": {"code": "in_progress", "name": "В работе"},
         "activity": "active",
         "deadline": "2026-07-20T18:00:00",
@@ -39,6 +41,12 @@ def test_parse_task_with_nested_objects():
     assert task.priority == 2
     assert task.is_active is True
     assert task.url == "https://eva.example.ru/task/PRJ-7"
+
+
+def test_parse_task_uses_cache_status_type_when_no_status_object():
+    task = dto.parse_task({"id": "CmfTask:9", "cache_status_type": "OPEN"})
+    assert task.status_category is StatusCategory.OPEN
+    assert task.status_name == "OPEN"
 
 
 def test_parse_task_archived_and_missing_fields():

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     evateam_token: str = Field(default="")
     # bearer | token | header:<HeaderName>
     evateam_auth_mode: str = Field(default="bearer")
+    # Проверка TLS: "true" | "false" | путь к CA-бандлу (.pem) для корп. сети
+    evateam_verify_ssl: str = Field(default="true")
+    # admin_mode: сервис-аккаунт (в группе Admins) видит задачи всех сотрудников
+    evateam_admin_mode: bool = Field(default=True)
 
     # Telegram
     telegram_bot_token: str = Field(default="")

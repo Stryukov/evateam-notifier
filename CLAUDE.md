@@ -24,25 +24,33 @@
   - `transports/` — мессенджеры.
   - `service.py` — оркестратор (application layer), склеивает всё вместе.
 
-## EvaTeam API — что известно
+## EvaTeam API — протокол (подтверждён на живом инстансе)
 
-- **Протокол:** JSON-RPC 2.0, `POST {base}/pub/pub_api?m=<Class>.<method>`.
-  Тело: `{"jsonrpc":"2.0","method":"Class.method","params":{...},"callid":"<uuid>"}`.
-  Ответ: `{"jsonrpc":"2.0","result":...}` или `{"error":{"code","message"}}`.
-- **Аутентификация:** API-токен (`CmfAccessToken`, создаётся в разделе «Безопасность»).
-  Способ передачи токена управляется `EVATEAM_AUTH_MODE` (см. `.env.example`) — **уточняется
-  эмпирически** через `evateam/smoke.py`.
-- **Модель задачи `CmfTask`** (поля подтверждены из метаданных модели):
-  `responsible`, `executors`, `cmf_owner`, `waiting_for`, `deadline`, `status`
-  (через `CmfStatus`/`CmfStatusCode`), `activity`, `priority`, `code`, `parent_task`, `tags`,
-  `status_closed_at`.
-- **Люди:** `CmfPerson` (есть `public_get_current_user`).
-- **Фильтры:** UBQL/BQL (`CmfBqlFilter`, `CmfTaskFilter`).
+- **Эндпоинт:** `POST {base}/api/` (с завершающим слэшем!). Протокол `jsonrpc: "2.2"`.
+- **Аутентификация:** `Authorization: Bearer <token>` (`CmfAccessToken`, раздел «Безопасность»).
+- **Тело запроса:**
+  ```json
+  {"jsonrpc":"2.2","callid":"<uuid>","method":"CmfTask.list",
+   "kwargs":{"filter":[["field","op",value],...],"fields":[...],"order_by":[...]},
+   "flags":{"admin_mode":true}}
+  ```
+  Ответ: `{"result": <объект|список>}` или `{"error":{"code","message"}}`.
+- **Методы:** `<Model>.list` (список) и `<Model>.get` (один объект). Используем `CmfTask.list`,
+  `CmfPerson.list`.
+- **filter:** список условий (И-логика). Операторы: `== != < > <= >= LIKE ("%текст%") EXISTS`.
+  Связь-одиночка: `["responsible.id","==",id]`; множественная: `["executors.id","==",id]`
+  (у самой связи без `.id` оператор `==` падает).
+- **fields:** плоские и вложенные (`"responsible.name"`, `"executors.name"`). null-поля в ответе
+  опускаются. `["**"]` — все поля.
+- **flags.admin_mode=true:** сервис-аккаунт (в группе **Admins**) видит объекты всех сотрудников.
+  Без него — только свои/публичные. Управляется `EVATEAM_ADMIN_MODE`.
+- **Статус задачи:** поле `cache_status_type` ∈ {`OPEN`,`IN_PROGRESS`,`IN_REVIEW`,`CLOSED`}.
+  Маппинг в `evateam/dto.py`: IN_PROGRESS→в работе, IN_REVIEW→ожидают, OPEN→предстоит, CLOSED→done.
+- **Идентификация людей:** у реальных сотрудников `login` = email (напр. `user@example.ru`);
+  у демо-пользователей `login=null`, но `email` заполнен. `find_person` ищет по login→email→name.
 
-### ⚠️ Что подтвердить на живом инстансе (Open items)
-
-Точные имена методов и синтаксис фильтра централизованы в `evateam/tasks.py` (константы вверху
-файла). Если запросы не работают против реального инстанса — правьте там. Помогает `evateam/smoke.py`.
+Все имена методов/полей централизованы в `evateam/tasks.py`. Диагностика — `evateam/smoke.py`.
+Внимание: `/pub/pub_api` — это ОТДЕЛЬНЫЙ публичный шлюз (всегда анонимный), НЕ использовать.
 
 ## Запуск и проверка
 

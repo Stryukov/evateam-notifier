@@ -28,11 +28,12 @@ def build_digest(tasks: list[Task]) -> Digest:
             continue
         if task.status_category is StatusCategory.DONE:
             continue
-        if task.status_category is StatusCategory.WAITING:
-            waiting.append(task)
-        elif task.status_category is StatusCategory.IN_PROGRESS:
+        if task.status_category is StatusCategory.IN_PROGRESS:
             in_progress.append(task)
-        # OPEN / UNKNOWN пока не попадают в «план дня» (только в работе и ожидают).
+        elif task.status_category in (StatusCategory.WAITING, StatusCategory.OPEN):
+            # «Ожидают / предстоит»: на проверке (IN_REVIEW) и открытые (OPEN).
+            waiting.append(task)
+        # UNKNOWN не попадает в «план дня».
 
     in_progress.sort(key=_sort_key)
     waiting.sort(key=_sort_key)

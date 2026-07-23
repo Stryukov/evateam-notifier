@@ -11,35 +11,20 @@ from typing import Any
 
 from ..core.models import Person, StatusCategory, Task
 
-# Маппинг кода/категории статуса EvaTeam (CmfStatusCode) -> обобщённая категория.
-# Уточняется под конкретный инстанс (набор статусов настраивается в EvaTeam).
-_STATUS_CATEGORY_BY_CODE: dict[str, StatusCategory] = {
-    "in_progress": StatusCategory.IN_PROGRESS,
-    "inprogress": StatusCategory.IN_PROGRESS,
-    "in_work": StatusCategory.IN_PROGRESS,
-    "work": StatusCategory.IN_PROGRESS,
-    "progress": StatusCategory.IN_PROGRESS,
-    "waiting": StatusCategory.WAITING,
-    "wait": StatusCategory.WAITING,
-    "on_hold": StatusCategory.WAITING,
-    "hold": StatusCategory.WAITING,
-    "paused": StatusCategory.WAITING,
-    "open": StatusCategory.OPEN,
-    "todo": StatusCategory.OPEN,
-    "new": StatusCategory.OPEN,
-    "reopened": StatusCategory.OPEN,
-    "done": StatusCategory.DONE,
-    "closed": StatusCategory.DONE,
-    "resolved": StatusCategory.DONE,
-    "complete": StatusCategory.DONE,
-    "completed": StatusCategory.DONE,
+# Маппинг типа статуса EvaTeam (поле `cache_status_type`) -> обобщённая категория.
+# Значения EvaTeam: OPEN, IN_PROGRESS, IN_REVIEW, CLOSED.
+_STATUS_CATEGORY_BY_TYPE: dict[str, StatusCategory] = {
+    "IN_PROGRESS": StatusCategory.IN_PROGRESS,
+    "IN_REVIEW": StatusCategory.WAITING,  # на проверке/ожидании
+    "OPEN": StatusCategory.OPEN,
+    "CLOSED": StatusCategory.DONE,
 }
 
 
-def status_category_from_code(code: str | None) -> StatusCategory:
-    if not code:
+def status_category_from_type(status_type: str | None) -> StatusCategory:
+    if not status_type:
         return StatusCategory.UNKNOWN
-    return _STATUS_CATEGORY_BY_CODE.get(code.strip().lower(), StatusCategory.UNKNOWN)
+    return _STATUS_CATEGORY_BY_TYPE.get(status_type.strip().upper(), StatusCategory.UNKNOWN)
 
 
 def _rel_field(value: Any, key: str = "name") -> str | None:
@@ -95,16 +80,9 @@ def parse_person(raw: dict[str, Any]) -> Person:
     )
 
 
-def _status_code(raw: dict[str, Any]) -> str | None:
-    status = raw.get("status")
-    if isinstance(status, dict):
-        return status.get("code") or status.get("status_code")
-    return raw.get("status_code") or (status if isinstance(status, str) else None)
-
-
 def parse_task(raw: dict[str, Any], *, base_url: str | None = None) -> Task:
-    status_name = _rel_field(raw.get("status")) or ""
-    status_code = _status_code(raw)
+    status_type = raw.get("cache_status_type")
+    status_name = _rel_field(raw.get("status")) or (status_type or "")
     task_id = str(raw.get("id") or "")
     code = raw.get("code")
 
@@ -132,7 +110,7 @@ def parse_task(raw: dict[str, Any], *, base_url: str | None = None) -> Task:
         code=code,
         title=(raw.get("name") or raw.get("title") or "").strip() or "(без названия)",
         status_name=status_name,
-        status_category=status_category_from_code(status_code),
+        status_category=status_category_from_type(status_type),
         deadline=parse_datetime(raw.get("deadline")),
         priority=priority,
         priority_name=_rel_field(priority_raw),

@@ -20,15 +20,16 @@ def _task(id_, cat, priority=None, deadline=None, active=True):
 def test_build_digest_groups_and_filters():
     tasks = [
         _task("1", StatusCategory.IN_PROGRESS),
-        _task("2", StatusCategory.WAITING),
+        _task("2", StatusCategory.WAITING),  # IN_REVIEW -> ожидают
         _task("3", StatusCategory.DONE),  # исключается
-        _task("4", StatusCategory.OPEN),  # не входит в план дня
+        _task("4", StatusCategory.OPEN),  # OPEN -> ожидают/предстоит
         _task("5", StatusCategory.IN_PROGRESS, active=False),  # архив
+        _task("6", StatusCategory.UNKNOWN),  # не входит в план дня
     ]
     digest = build_digest(tasks)
     assert [t.id for t in digest.in_progress] == ["1"]
-    assert [t.id for t in digest.waiting] == ["2"]
-    assert digest.total == 2
+    assert sorted(t.id for t in digest.waiting) == ["2", "4"]
+    assert digest.total == 3
     assert digest.is_empty is False
 
 

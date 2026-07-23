@@ -1,9 +1,7 @@
 """Запросы к EvaTeam: поиск людей и задач сотрудника.
 
-⚠️  OPEN ITEMS — уточнить на живом инстансе (через evateam/smoke.py):
-    Имена методов и синтаксис фильтра (UBQL/BQL) вынесены в константы ниже.
-    Если запросы не отрабатывают — правьте ТОЛЬКО этот файл, остальной код не зависит
-    от конкретных методов EvaTeam.
+Протокол подтверждён на живом инстансе (см. CLAUDE.md и evateam/client.py):
+метод `<Model>.list` с `kwargs={"filter":[...],"fields":[...],"order_by":[...]}`.
 """
 
 from __future__ import annotations
@@ -14,41 +12,34 @@ from ..core.models import Person, Task
 from .client import EvaTeamClient
 from .dto import parse_person, parse_task
 
-# --- OPEN ITEMS: методы EvaTeam (предположительные, подтвердить smoke-скриптом) ---
-METHOD_PERSON_LIST = "CmfPerson.api_list"
-METHOD_TASK_LIST = "CmfTask.api_list"
+METHOD_PERSON_LIST = "CmfPerson.list"
+METHOD_TASK_LIST = "CmfTask.list"
 
-# Поля, которые запрашиваем у задачи.
+# Поля задачи, которые запрашиваем (nested-поля тоже поддерживаются, напр. "responsible.name").
 TASK_FIELDS = [
     "id",
     "code",
     "name",
-    "status",
-    "activity",
+    "cache_status_type",
     "deadline",
     "priority",
-    "executors",
-    "responsible",
-    "waiting_for",
+    "activity",
 ]
 
-PERSON_FIELDS = ["id", "name", "login", "email", "email1"]
+PERSON_FIELDS = ["id", "name", "login", "email", "code"]
+
+# Статусы, которые считаем «закрытыми» и не показываем в напоминаниях.
+CLOSED_STATUS_TYPE = "CLOSED"
 
 
 def _extract_items(result: Any) -> list[dict[str, Any]]:
-    """Достать список записей из разных возможных форм ответа EvaTeam."""
+    """`.list` возвращает список объектов; `.get` — один объект."""
     if result is None:
         return []
     if isinstance(result, list):
         return [r for r in result if isinstance(r, dict)]
     if isinstance(result, dict):
-        for key in ("items", "rows", "data", "objects", "result", "list"):
-            value = result.get(key)
-            if isinstance(value, list):
-                return [r for r in value if isinstance(r, dict)]
-        # Одиночный объект.
-        if result.get("id"):
-            return [result]
+        return [result]
     return []
 
 
@@ -60,40 +51,53 @@ class EvaTeamTasks:
         self._base_url = base_url
 
     async def find_person(self, query: str) -> list[Person]:
-        """Найти пользователя(-ей) по email или логину."""
+        """Найти пользователя(-ей) по email или логину (у реальных сотрудников login=email).
+
+        Точное совпадение по login → по email → мягкий поиск по имени (LIKE).
+        """
         query = query.strip()
-        # OPEN ITEM: синтаксис фильтра. Пробуем совпадение по login или email.
-        params = {
-            "filter": {
-                "or": [
-                    {"login": query},
-                    {"email": query},
-                    {"email1": query},
-                ]
-            },
-            "fields": PERSON_FIELDS,
-            "limit": 10,
-        }
-        result = await self._client.call(METHOD_PERSON_LIST, params)
+        if not query:
+            return []
+
+        for field in ("login", "email"):
+            people = await self._list_people([[field, "==", query]])
+            if people:
+                return people
+
+        # Фолбэк: поиск по имени (например, "Иванов").
+        return await self._list_people([["name", "LIKE", f"%{query}%"]])
+
+    async def _list_people(self, filt: list[list]) -> list[Person]:
+        result = await self._client.call(
+            METHOD_PERSON_LIST, kwargs={"filter": filt, "fields": PERSON_FIELDS}
+        )
         return [parse_person(item) for item in _extract_items(result)]
 
     async def get_tasks_for_person(self, person_id: str) -> list[Task]:
-        """Активные задачи, где сотрудник — исполнитель или ответственный."""
-        # OPEN ITEM: синтаксис фильтра по исполнителю/ответственному и активности.
-        params = {
-            "filter": {
-                "and": [
-                    {
-                        "or": [
-                            {"executors": person_id},
-                            {"responsible": person_id},
-                        ]
-                    },
-                    {"activity": "active"},
-                ]
-            },
-            "fields": TASK_FIELDS,
-            "limit": 500,
-        }
-        result = await self._client.call(METHOD_TASK_LIST, params)
-        return [parse_task(item, base_url=self._base_url) for item in _extract_items(result)]
+        """Активные (не закрытые) задачи, где сотрудник — исполнитель или ответственный.
+
+        Фильтры EvaTeam соединяются по И, поэтому «исполнитель ИЛИ ответственный»
+        выполняется двумя запросами с объединением по id.
+        """
+        not_closed = ["cache_status_type", "!=", CLOSED_STATUS_TYPE]
+        relations = [
+            ["executors.id", "==", person_id],
+            ["responsible.id", "==", person_id],
+        ]
+
+        by_id: dict[str, dict[str, Any]] = {}
+        for relation in relations:
+            result = await self._client.call(
+                METHOD_TASK_LIST,
+                kwargs={
+                    "filter": [relation, not_closed],
+                    "fields": TASK_FIELDS,
+                    "order_by": ["deadline"],
+                },
+            )
+            for item in _extract_items(result):
+                task_id = item.get("id")
+                if task_id:
+                    by_id[task_id] = item
+
+        return [parse_task(item, base_url=self._base_url) for item in by_id.values()]

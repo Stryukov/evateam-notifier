@@ -29,6 +29,8 @@ class App:
             settings.evateam_base_url,
             settings.evateam_token,
             settings.evateam_auth_mode,
+            admin_mode=settings.evateam_admin_mode,
+            verify=settings.evateam_verify_ssl,
         )
         tasks_api = EvaTeamTasks(client, base_url=settings.evateam_base_url)
 

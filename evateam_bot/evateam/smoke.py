@@ -20,10 +20,13 @@ async def _run(query: str) -> None:
     settings = get_settings()
     print(f"Base URL: {settings.evateam_base_url}")
     print(f"Auth mode: {settings.evateam_auth_mode}")
+    print(f"Verify SSL: {settings.evateam_verify_ssl}")
     async with EvaTeamClient(
         settings.evateam_base_url,
         settings.evateam_token,
         settings.evateam_auth_mode,
+        admin_mode=settings.evateam_admin_mode,
+        verify=settings.evateam_verify_ssl,
     ) as client:
         tasks_api = EvaTeamTasks(client, base_url=settings.evateam_base_url)
 
