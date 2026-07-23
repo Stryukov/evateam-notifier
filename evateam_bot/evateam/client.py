@@ -88,6 +88,7 @@ class EvaTeamClient:
         admin_mode: bool = True,
         timeout: float = 30.0,
         verify: bool | str = True,
+        proxy: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         # Аутентифицированный JSON-RPC эндпоинт EvaTeam — {base}/api/ (со слэшем).
@@ -99,8 +100,13 @@ class EvaTeamClient:
         # admin_mode позволяет сервис-аккаунту (из группы Admins) видеть чужие объекты.
         self._default_flags: dict[str, Any] = {"admin_mode": True} if admin_mode else {}
         self._owns_client = client is None
+        # trust_env=False -> прокси управляется только параметром `proxy` (из .env),
+        # без неявного чтения системных HTTPS_PROXY/HTTP_PROXY.
         self._client = client or httpx.AsyncClient(
-            timeout=timeout, verify=_build_verify(verify)
+            timeout=timeout,
+            verify=_build_verify(verify),
+            proxy=proxy,
+            trust_env=False,
         )
 
     async def call(

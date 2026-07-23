@@ -26,12 +26,16 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str = Field(default="")
-    # Прокси для доступа к api.telegram.org (корп-сеть). Пусто -> берём из
-    # окружения (HTTPS_PROXY/HTTP_PROXY). "none" -> без прокси (прямое соединение).
-    telegram_proxy: str = Field(default="")
 
-    def resolve_telegram_proxy(self) -> str | None:
-        raw = self.telegram_proxy.strip()
+    # Прокси для исходящих запросов (Telegram и EvaTeam) в корп-сети.
+    #   ""     -> взять из окружения (HTTPS_PROXY/HTTP_PROXY)
+    #   "none" -> без прокси (прямое соединение)
+    #   <url>  -> явный адрес, напр. http://proxy.example.local:1080
+    proxy_url: str = Field(default="")
+
+    def resolve_proxy(self) -> str | None:
+        """Вернуть URL прокси или None (прямое соединение)."""
+        raw = self.proxy_url.strip()
         if raw.lower() == "none":
             return None
         if raw:

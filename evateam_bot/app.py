@@ -24,6 +24,7 @@ class App:
     @classmethod
     def build(cls, settings: Settings | None = None) -> "App":
         settings = settings or get_settings()
+        proxy = settings.resolve_proxy()
 
         client = EvaTeamClient(
             settings.evateam_base_url,
@@ -31,6 +32,7 @@ class App:
             settings.evateam_auth_mode,
             admin_mode=settings.evateam_admin_mode,
             verify=settings.evateam_verify_ssl,
+            proxy=proxy,
         )
         tasks_api = EvaTeamTasks(client, base_url=settings.evateam_base_url)
 
@@ -40,10 +42,7 @@ class App:
         # Регистрация транспортов. Добавить MAX — просто ещё одна запись здесь.
         transports: dict[TransportName, BotTransport] = {}
         if settings.telegram_bot_token:
-            tg = TelegramTransport(
-                settings.telegram_bot_token,
-                proxy=settings.resolve_telegram_proxy(),
-            )
+            tg = TelegramTransport(settings.telegram_bot_token, proxy=proxy)
             transports[tg.name] = tg
 
         service = BotService(transports=transports, tasks_api=tasks_api, repo=repo)
