@@ -21,6 +21,20 @@ ACTION_REJECT = "reject_link"
 EMOJI_OVERDUE = "🔴"  # срок нарушен
 EMOJI_DEADLINE = "⏳"  # срок ещё не наступил
 
+# Иконки приоритета — по значениям EvaTeam (0=Обычный), в стиле таск-трекера.
+PRIORITY_ICONS = {
+    3: "⛔",  # Блокирующий
+    2: "🔥",  # Критичный
+    1: "🔺",  # Высокий
+    0: "🟰",  # Обычный
+    -1: "🔽",  # Низкий
+    -2: "⏬",  # Минимальный
+}
+
+
+def _priority_icon(priority: int | None) -> str:
+    return PRIORITY_ICONS.get(priority if priority is not None else 0, "🟰")
+
 
 def _esc(text: str) -> str:
     return html.escape(text or "")
@@ -88,7 +102,7 @@ def _code_html(task: Task) -> str:
 
 
 def _fmt_task_line(task: Task, now: datetime) -> str:
-    line = f"• {_code_html(task)}{_esc(task.title)}"
+    line = f"• {_priority_icon(task.priority)} {_code_html(task)}{_esc(task.title)}"
     if task.deadline is not None:
         overdue = task.is_overdue(now)
         emoji = EMOJI_OVERDUE if overdue else EMOJI_DEADLINE
@@ -113,8 +127,10 @@ def digest_message(person: Person, digest: Digest, now: datetime | None = None) 
 
     parts = ["🌅 Доброе утро! Ваш план дня:"]
     parts += _section("🔧 В работе", digest.in_progress, now)
-    parts += _section("🆕 Не начаты", digest.not_started, now)
     parts += _section("⏳ Ждут подтверждения", digest.waiting, now)
+    # «Не начаты» показываем только числом, без списка.
+    if digest.not_started:
+        parts += ["", f"🆕 Не начатых задач: {len(digest.not_started)}"]
     return OutgoingMessage(text="\n".join(parts))
 
 

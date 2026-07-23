@@ -8,7 +8,7 @@ NOW = datetime(2026, 7, 23, 12, 0)
 PERSON = Person(id="p1", name="Пётр")
 
 
-def _task(id_, cat, deadline=None, url=None, code=None, title="Задача"):
+def _task(id_, cat, deadline=None, url=None, code=None, title="Задача", priority=None):
     return Task(
         id=id_,
         code=code or id_,
@@ -16,6 +16,7 @@ def _task(id_, cat, deadline=None, url=None, code=None, title="Задача"):
         status_name=cat.value,
         status_category=cat,
         deadline=deadline,
+        priority=priority,
         url=url,
     )
 
@@ -35,20 +36,29 @@ def test_overdue_uses_red_emoji_and_future_uses_hourglass():
     assert formatting.EMOJI_DEADLINE in msg.text  # ⏳ для будущей
 
 
-def test_three_sections_present():
+def test_not_started_shown_as_count_only():
     tasks = [
         _task("a", StatusCategory.IN_PROGRESS),
-        _task("b", StatusCategory.OPEN),
+        _task("todo1", StatusCategory.OPEN, title="Секретная задача TODO"),
+        _task("todo2", StatusCategory.OPEN),
         _task("c", StatusCategory.WAITING),
     ]
     msg = formatting.digest_message(PERSON, build_digest(tasks), NOW)
     assert "В работе" in msg.text
-    assert "Не начаты" in msg.text
     assert "Ждут подтверждения" in msg.text
+    # «Не начаты» — только счётчиком, без перечисления задач
+    assert "Не начатых задач: 2" in msg.text
+    assert "Секретная задача TODO" not in msg.text
+
+
+def test_priority_icon_shown():
+    t = _task("p", StatusCategory.IN_PROGRESS, priority=2)  # Критичный -> 🔥
+    msg = formatting.digest_message(PERSON, build_digest([t]), NOW)
+    assert formatting.PRIORITY_ICONS[2] in msg.text
 
 
 def test_html_escaping_of_title():
-    t = _task("x", StatusCategory.OPEN, title="A < B & C")
+    t = _task("x", StatusCategory.IN_PROGRESS, title="A < B & C")
     msg = formatting.digest_message(PERSON, build_digest([t]), NOW)
     assert "A &lt; B &amp; C" in msg.text
 

@@ -24,6 +24,7 @@ TASK_FIELDS = [
     "deadline",
     "priority",
     "activity",
+    "main_list.code",
 ]
 
 PERSON_FIELDS = ["id", "name", "login", "email", "code"]

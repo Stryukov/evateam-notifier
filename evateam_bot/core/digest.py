@@ -8,14 +8,14 @@ from .models import Digest, StatusCategory, Task
 
 
 def _sort_key(task: Task) -> tuple:
-    """Приоритетные и с ближайшим дедлайном — выше.
+    """Сортировка: выше приоритет и ближе дедлайн — раньше.
 
-    Меньший `priority` в EvaTeam обычно = выше приоритет; None уходит в конец.
+    В EvaTeam `priority` — целое (0=Обычный), большее значение = выше приоритет.
     """
-    priority = task.priority if task.priority is not None else 10_000
+    priority = task.priority if task.priority is not None else 0
     has_deadline = 0 if task.deadline is not None else 1
     deadline = task.deadline or datetime.max
-    return (priority, has_deadline, deadline)
+    return (-priority, has_deadline, deadline)
 
 
 def build_digest(tasks: list[Task]) -> Digest:

@@ -36,13 +36,13 @@ def test_build_digest_groups_and_filters():
 
 def test_digest_sorted_by_priority_then_deadline():
     tasks = [
-        _task("a", StatusCategory.IN_PROGRESS, priority=5),
-        _task("b", StatusCategory.IN_PROGRESS, priority=1),
-        _task("c", StatusCategory.IN_PROGRESS, priority=1, deadline=datetime(2026, 1, 1)),
+        _task("a", StatusCategory.IN_PROGRESS, priority=2),  # Критичный — выше всех
+        _task("b", StatusCategory.IN_PROGRESS, priority=0),
+        _task("c", StatusCategory.IN_PROGRESS, priority=0, deadline=datetime(2026, 1, 1)),
     ]
     digest = build_digest(tasks)
-    # priority=1 выше; среди равных — с дедлайном раньше
-    assert [t.id for t in digest.in_progress] == ["c", "b", "a"]
+    # большее значение priority = выше; среди равных — с дедлайном раньше
+    assert [t.id for t in digest.in_progress] == ["a", "c", "b"]
 
 
 def test_empty_digest():
