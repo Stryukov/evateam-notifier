@@ -1,0 +1,14 @@
+aiogram>=3.4,<4.0
+aiohttp-socks>=0.8  # прокси для api.telegram.org (aiogram/aiohttp) в корп-сети
+httpx>=0.27
+APScheduler>=3.10,<4.0
+SQLAlchemy>=2.0
+pydantic>=2.6
+pydantic-settings>=2.2
+tzdata>=2024.1
+truststore>=0.9  # проверка TLS через системное хранилище ОС (корп. CA)
+
+# dev / test
+pytest>=8.0
+pytest-asyncio>=0.23
+respx>=0.21
