@@ -1,0 +1,141 @@
+"""Парсинг сырых ответов EvaTeam в доменные модели (`core.models`).
+
+Терпимо относится к разным формам полей — EvaTeam может отдавать связанные объекты
+как строку-id, как {"id","name"} или как список таких объектов.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from ..core.models import Person, StatusCategory, Task
+
+# Маппинг кода/категории статуса EvaTeam (CmfStatusCode) -> обобщённая категория.
+# Уточняется под конкретный инстанс (набор статусов настраивается в EvaTeam).
+_STATUS_CATEGORY_BY_CODE: dict[str, StatusCategory] = {
+    "in_progress": StatusCategory.IN_PROGRESS,
+    "inprogress": StatusCategory.IN_PROGRESS,
+    "in_work": StatusCategory.IN_PROGRESS,
+    "work": StatusCategory.IN_PROGRESS,
+    "progress": StatusCategory.IN_PROGRESS,
+    "waiting": StatusCategory.WAITING,
+    "wait": StatusCategory.WAITING,
+    "on_hold": StatusCategory.WAITING,
+    "hold": StatusCategory.WAITING,
+    "paused": StatusCategory.WAITING,
+    "open": StatusCategory.OPEN,
+    "todo": StatusCategory.OPEN,
+    "new": StatusCategory.OPEN,
+    "reopened": StatusCategory.OPEN,
+    "done": StatusCategory.DONE,
+    "closed": StatusCategory.DONE,
+    "resolved": StatusCategory.DONE,
+    "complete": StatusCategory.DONE,
+    "completed": StatusCategory.DONE,
+}
+
+
+def status_category_from_code(code: str | None) -> StatusCategory:
+    if not code:
+        return StatusCategory.UNKNOWN
+    return _STATUS_CATEGORY_BY_CODE.get(code.strip().lower(), StatusCategory.UNKNOWN)
+
+
+def _rel_field(value: Any, key: str = "name") -> str | None:
+    """Достать читаемое значение из связанного поля (id-строка / объект / список)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return value.get(key) or value.get("id")
+    if isinstance(value, list) and value:
+        return _rel_field(value[0], key)
+    return str(value)
+
+
+def _rel_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return value.get("id")
+    if isinstance(value, list) and value:
+        return _rel_id(value[0])
+    return None
+
+
+def parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    # EvaTeam обычно ISO 8601; "Z" -> смещение.
+    text = text.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+    return None
+
+
+def parse_person(raw: dict[str, Any]) -> Person:
+    return Person(
+        id=str(raw.get("id") or raw.get("person_id") or ""),
+        name=(raw.get("name") or raw.get("full_name") or raw.get("login") or "").strip(),
+        login=raw.get("login"),
+        email=raw.get("email") or raw.get("email1"),
+    )
+
+
+def _status_code(raw: dict[str, Any]) -> str | None:
+    status = raw.get("status")
+    if isinstance(status, dict):
+        return status.get("code") or status.get("status_code")
+    return raw.get("status_code") or (status if isinstance(status, str) else None)
+
+
+def parse_task(raw: dict[str, Any], *, base_url: str | None = None) -> Task:
+    status_name = _rel_field(raw.get("status")) or ""
+    status_code = _status_code(raw)
+    task_id = str(raw.get("id") or "")
+    code = raw.get("code")
+
+    url = None
+    if base_url and code:
+        url = f"{base_url.rstrip('/')}/task/{code}"
+
+    activity = raw.get("activity")
+    is_active = True
+    if isinstance(activity, str):
+        is_active = activity.strip().lower() not in {"archive", "archived", "inactive"}
+    elif isinstance(activity, bool):
+        is_active = activity
+
+    priority_raw = raw.get("priority")
+    priority = None
+    if isinstance(priority_raw, (int, float)):
+        priority = int(priority_raw)
+    elif isinstance(priority_raw, dict):
+        maybe = priority_raw.get("orderno") or priority_raw.get("weight")
+        priority = int(maybe) if isinstance(maybe, (int, float)) else None
+
+    return Task(
+        id=task_id,
+        code=code,
+        title=(raw.get("name") or raw.get("title") or "").strip() or "(без названия)",
+        status_name=status_name,
+        status_category=status_category_from_code(status_code),
+        deadline=parse_datetime(raw.get("deadline")),
+        priority=priority,
+        priority_name=_rel_field(priority_raw),
+        url=url,
+        is_active=is_active,
+    )
