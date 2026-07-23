@@ -102,7 +102,8 @@ def _code_html(task: Task) -> str:
 
 
 def _fmt_task_line(task: Task, now: datetime) -> str:
-    line = f"• {_priority_icon(task.priority)} {_code_html(task)}{_esc(task.title)}"
+    board = f"[{_esc(task.project_name)}] " if task.project_name else ""
+    line = f"• {_priority_icon(task.priority)} {_code_html(task)}{board}{_esc(task.title)}"
     if task.deadline is not None:
         overdue = task.is_overdue(now)
         emoji = EMOJI_OVERDUE if overdue else EMOJI_DEADLINE

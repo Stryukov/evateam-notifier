@@ -42,6 +42,7 @@ class Task:
     deadline: datetime | None = None
     priority: int | None = None
     priority_name: str | None = None
+    project_name: str | None = None
     url: str | None = None
     is_active: bool = True
 

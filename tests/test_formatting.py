@@ -8,7 +8,8 @@ NOW = datetime(2026, 7, 23, 12, 0)
 PERSON = Person(id="p1", name="Пётр")
 
 
-def _task(id_, cat, deadline=None, url=None, code=None, title="Задача", priority=None):
+def _task(id_, cat, deadline=None, url=None, code=None, title="Задача", priority=None,
+          project_name=None):
     return Task(
         id=id_,
         code=code or id_,
@@ -17,8 +18,16 @@ def _task(id_, cat, deadline=None, url=None, code=None, title="Задача", pr
         status_category=cat,
         deadline=deadline,
         priority=priority,
+        project_name=project_name,
         url=url,
     )
+
+
+def test_project_name_shown_in_brackets():
+    t = _task("t", StatusCategory.IN_PROGRESS, code="BLT-29",
+              title="Работа с должниками ВВК", project_name="Биллинг (задачи)")
+    msg = formatting.digest_message(PERSON, build_digest([t]), NOW)
+    assert "[Биллинг (задачи)] Работа с должниками ВВК" in msg.text
 
 
 def test_task_code_rendered_as_link():

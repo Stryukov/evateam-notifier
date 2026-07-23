@@ -117,6 +117,7 @@ def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
         deadline=parse_datetime(raw.get("deadline")),
         priority=priority,
         priority_name=_rel_field(priority_raw),
+        project_name=_rel_field(raw.get("project")),
         url=url,
         is_active=is_active,
     )
