@@ -150,22 +150,24 @@ def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
 
 
 def plan_dates(raw: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
-    """Плановые («мягкие») даты начала и окончания.
+    """Плановые («мягкие») даты начала и окончания — ровно то, что показывает интерфейс.
 
-    Интерфейс EvaTeam пишет их в связанный CmfGanttTask (`op_gantt_task`), а не в
-    одноимённые поля самой задачи — те всегда пустые. Их оставляем запасным путём.
+    Единственный источник — связанный CmfGanttTask (`op_gantt_task`).
 
-    Строгий `_rel_key` здесь обязателен: `_rel_field` вернул бы id гант-объекта,
+    Фолбэка на `CmfTask.plan_start_date` / `plan_end_date` здесь намеренно НЕТ:
+    это другая пара полей, интерфейс её не отображает и не обновляет, но в ней
+    остаются устаревшие значения. Пример: у SPT-16 в карточке «Плановая дата
+    окончания: Нет», а в `plan_end_date` лежит 2026-06-05 от прошлых правок —
+    фолбэк вытаскивал этот мусор в отчёт.
+
+    Строгий `_rel_key` обязателен: `_rel_field` вернул бы id гант-объекта,
     и `parse_datetime` молча отдал бы None вместо реальной даты.
     """
     gantt = raw.get("op_gantt_task")
-    start = parse_datetime(_rel_key(gantt, "sched_start_date")) or parse_datetime(
-        raw.get("plan_start_date")
+    return (
+        parse_datetime(_rel_key(gantt, "sched_start_date")),
+        parse_datetime(_rel_key(gantt, "sched_finish_date")),
     )
-    end = parse_datetime(_rel_key(gantt, "sched_finish_date")) or parse_datetime(
-        raw.get("plan_end_date")
-    )
-    return start, end
 
 
 def _assignee(raw: dict[str, Any]) -> str | None:

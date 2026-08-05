@@ -17,8 +17,11 @@ EPIC = {
     "logic_prefix": "task.epic",
     "cache_status_type": "IN_PROGRESS",
     "status": {"id": "CmfStatus:s1", "code": "in_progress", "name": "В работе"},
-    "plan_start_date": "2026-08-01T00:00:00+03:00",
-    "plan_end_date": "2026-09-30T00:00:00+03:00",
+    "op_gantt_task": {
+        "id": "CmfGanttTask:g1",
+        "sched_start_date": "2026-08-01T00:00:00+03:00",
+        "sched_finish_date": "2026-09-30T00:00:00+03:00",
+    },
     "parent_id": "CmfProject:p1",
     "parent": {"id": "CmfProject:p1", "name": "Биллинг (задачи)"},
     "main_list.code": None,
@@ -134,7 +137,7 @@ async def test_active_tasks_use_exactly_two_calls_and_drop_epics():
 
 
 @respx.mock
-async def test_epic_query_asks_for_plan_dates_and_status_code():
+async def test_epic_query_asks_for_gantt_dates_and_status_code():
     route = respx.post(URL).mock(side_effect=_responder)
     await _fetch()
 
@@ -145,8 +148,16 @@ async def test_epic_query_asks_for_plan_dates_and_status_code():
         and any(c[0] == "logic_prefix" for c in body["kwargs"]["filter"])
     )
     fields = epic_body["kwargs"]["fields"]
-    for expected in ("status.code", "plan_start_date", "plan_end_date", "parent_id"):
+    for expected in (
+        "status.code",
+        "op_gantt_task.sched_start_date",
+        "op_gantt_task.sched_finish_date",
+        "parent_id",
+    ):
         assert expected in fields
+    # Собственные поля задачи не запрашиваем: там устаревшие значения.
+    assert "plan_start_date" not in fields
+    assert "plan_end_date" not in fields
 
 
 @respx.mock

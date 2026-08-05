@@ -36,8 +36,10 @@ def test_parse_task_reads_summary_fields():
             "name": "Задача",
             "cache_status_type": "IN_PROGRESS",
             "status": {"code": "in_progress", "name": "В работе"},
-            "plan_start_date": "2026-08-01",
-            "plan_end_date": "2026-08-31",
+            "op_gantt_task": {
+                "sched_start_date": "2026-08-01",
+                "sched_finish_date": "2026-08-31",
+            },
             "epic_id": "CmfTask:e1",
             "parent_id": "CmfProject:p1",
             "responsible": {"id": "CmfPerson:u1", "name": "Иванов"},
@@ -77,12 +79,31 @@ def test_plan_dates_come_from_gantt_object():
     assert task.soft_end != task.hard_end  # два разных срока, не склеены
 
 
-def test_gantt_dates_fall_back_to_task_fields():
+def test_task_own_plan_fields_are_ignored():
+    """CmfTask.plan_*_date хранят устаревший мусор, которого нет в интерфейсе.
+
+    Реальный случай SPT-16: в карточке «Плановая дата окончания: Нет», а в
+    plan_end_date лежит 2026-06-05 от прошлых правок. Источник должен быть один — Гант.
+    """
+    task = dto.parse_task(
+        {
+            "id": "1",
+            "name": "SPT-16",
+            "plan_start_date": "2026-06-02",
+            "plan_end_date": "2026-06-05",
+            "op_gantt_task": {"sched_start_date": "2026-07-20T08:00:00"},
+        }
+    )
+    assert task.plan_start == datetime(2026, 7, 20, 8, 0)  # из Ганта
+    assert task.plan_end is None  # в интерфейсе пусто — и у нас пусто
+
+
+def test_no_gantt_object_means_no_plan_dates():
     task = dto.parse_task(
         {"id": "1", "name": "x", "plan_start_date": "2026-08-01", "plan_end_date": "2026-08-31"}
     )
-    assert task.plan_start == datetime(2026, 8, 1)
-    assert task.plan_end == datetime(2026, 8, 31)
+    assert task.plan_start is None
+    assert task.plan_end is None
 
 
 def test_gantt_as_bare_id_string_yields_no_dates():

@@ -49,8 +49,9 @@ ACTIVE_STATUS_TYPES = ("IN_PROGRESS", "IN_REVIEW")
 # Плановые даты («мягкий» срок) живут НЕ на CmfTask, а в связанном CmfGanttTask:
 # CmfTask.op_gantt_task -> sched_start_date / sched_finish_date. Именно их показывает
 # интерфейс как «Плановая дата начала/окончания».
-# ВНИМАНИЕ: у CmfTask есть собственные plan_start_date/plan_end_date — это ДРУГАЯ пара
-# полей, интерфейс её не заполняет (всегда null). Оставлены только как запасной источник.
+# ВНИМАНИЕ: собственные plan_start_date/plan_end_date у CmfTask — ДРУГАЯ пара полей.
+# Интерфейс их не показывает и не обновляет, но там остаются устаревшие значения,
+# поэтому мы их намеренно НЕ запрашиваем и НЕ используем как фолбэк (см. dto.plan_dates).
 # `deadline` на CmfTask — «Крайний срок», жёсткий дедлайн.
 GANTT_START_FIELD = "op_gantt_task.sched_start_date"
 GANTT_END_FIELD = "op_gantt_task.sched_finish_date"
@@ -68,8 +69,6 @@ EPIC_FIELDS = [
     "status.name",
     GANTT_START_FIELD,
     GANTT_END_FIELD,
-    "plan_start_date",
-    "plan_end_date",
     "deadline",
     "priority",
     "responsible.name",
@@ -88,8 +87,6 @@ EPIC_TASK_FIELDS = TASK_FIELDS + [
     "status.name",
     GANTT_START_FIELD,
     GANTT_END_FIELD,
-    "plan_start_date",
-    "plan_end_date",
     "responsible.name",
     "executors.name",
     "epic_id",
