@@ -20,6 +20,7 @@ from .models import (
     Epic,
     EpicSummary,
     Health,
+    HealthReason,
     Portfolio,
     ProjectSummary,
     StatusCategory,
@@ -41,16 +42,30 @@ class SummaryOptions:
     include_orphan_tasks: bool = False
 
 
-def date_health(end: datetime | None, now: datetime, risk_days: int) -> Health:
-    """Светофор по плановому концу. Сравниваем по датам, а не по времени."""
-    if end is None:
-        return Health.NO_DATE
-    days = (end.date() - now.date()).days
-    if days < 0:
-        return Health.LATE
-    if days <= risk_days:
-        return Health.RISK
-    return Health.OK
+def combined_health(
+    soft_end: datetime | None,
+    hard_end: datetime | None,
+    now: datetime,
+    risk_days: int,
+) -> tuple[Health, HealthReason]:
+    """Светофор по двум срокам. Сравниваем по датам, а не по времени.
+
+    Жёсткий строже мягкого: красный — только сорванный Крайний срок. Отставание от
+    плановой даты окончания — жёлтое: план сдвинулся, но обязательство ещё не нарушено.
+    """
+    today = now.date()
+    if hard_end is not None and hard_end.date() < today:
+        return Health.LATE, HealthReason.LATE_HARD
+    if soft_end is not None and soft_end.date() < today:
+        return Health.RISK, HealthReason.BEHIND_PLAN
+    if any(
+        end is not None and 0 <= (end.date() - today).days <= risk_days
+        for end in (soft_end, hard_end)
+    ):
+        return Health.RISK, HealthReason.DUE_SOON
+    if soft_end is not None or hard_end is not None:
+        return Health.OK, HealthReason.ON_TRACK
+    return Health.NO_DATE, HealthReason.NO_DATE
 
 
 def worst(healths: Iterable[Health]) -> Health:
@@ -102,35 +117,60 @@ def build_summary(
 def _build_epic_summary(
     epic: Epic, tasks: list[Task], now: datetime, options: SummaryOptions
 ) -> EpicSummary:
-    task_health = {task.id: date_health(task.effective_end, now, options.risk_days) for task in tasks}
-    ordered = sorted(tasks, key=lambda t: _task_sort_key(t, task_health[t.id]))
+    task_state = {
+        task.id: combined_health(task.soft_end, task.hard_end, now, options.risk_days)
+        for task in tasks
+    }
+    ordered = sorted(tasks, key=lambda t: _task_sort_key(t, task_state[t.id][0]))
 
-    start, end, derived = _epic_dates(epic, tasks)
-    health = worst(
-        [date_health(end, now, options.risk_days), *(task_health[t.id] for t in tasks)]
-    )
-    days_left = (end.date() - now.date()).days if end else None
+    start, end, derived = _epic_plan_dates(epic, tasks)
+    hard_end = _epic_hard_end(epic, tasks)
+    own_health, own_reason = combined_health(end, hard_end, now, options.risk_days)
+    health = worst([own_health, *(state[0] for state in task_state.values())])
+    reason = _pick_reason(health, own_reason, [state[1] for state in task_state.values()])
 
     return EpicSummary(
         epic=epic,
         tasks=ordered,
         health=health,
+        reason=reason,
         start_date=start,
         end_date=end,
-        days_left=days_left,
+        hard_end=hard_end,
+        days_left=(end.date() - now.date()).days if end else None,
+        days_left_hard=(hard_end.date() - now.date()).days if hard_end else None,
         in_progress=sum(1 for t in tasks if t.status_category is StatusCategory.IN_PROGRESS),
         in_review=sum(1 for t in tasks if t.status_category is StatusCategory.WAITING),
-        tasks_without_date=sum(1 for t in tasks if t.effective_end is None),
+        tasks_without_date=sum(1 for t in tasks if t.soft_end is None),
         tasks_without_assignee=sum(1 for t in tasks if not t.assignee),
-        blockers=[t for t in ordered if task_health[t.id] is Health.LATE],
+        blockers=[t for t in ordered if task_state[t.id][1] is HealthReason.LATE_HARD],
+        behind_plan=[t for t in ordered if task_state[t.id][1] is HealthReason.BEHIND_PLAN],
         is_idle=not tasks,
         dates_are_derived=derived,
+        open_ended=start is not None and end is None,
     )
 
 
-def _epic_dates(epic: Epic, tasks: list[Task]) -> tuple[datetime | None, datetime | None, bool]:
-    """Плановые даты эпика; при их отсутствии выводим из задач."""
-    start, end = epic.plan_start, epic.effective_end
+def _pick_reason(
+    health: Health, own: HealthReason, task_reasons: list[HealthReason]
+) -> HealthReason:
+    """Причина цвета эпика: если покраснел из-за задачи, назвать именно её причину."""
+    if health is Health.LATE:
+        return HealthReason.LATE_HARD
+    if health is Health.RISK:
+        if own in (HealthReason.BEHIND_PLAN, HealthReason.DUE_SOON):
+            return own
+        if HealthReason.BEHIND_PLAN in task_reasons:
+            return HealthReason.BEHIND_PLAN
+        return HealthReason.DUE_SOON
+    return own
+
+
+def _epic_plan_dates(
+    epic: Epic, tasks: list[Task]
+) -> tuple[datetime | None, datetime | None, bool]:
+    """Плановые (мягкие) даты эпика; при их отсутствии выводим из задач."""
+    start, end = epic.plan_start, epic.soft_end
     derived = False
 
     if start is None:
@@ -138,10 +178,28 @@ def _epic_dates(epic: Epic, tasks: list[Task]) -> tuple[datetime | None, datetim
         if starts:
             start, derived = min(starts), True
     if end is None:
-        ends = [t.effective_end for t in tasks if t.effective_end]
+        ends = [t.soft_end for t in tasks if t.soft_end]
         if ends:
             end, derived = max(ends), True
+
+    # Встречается в реальных данных: окончание раньше начала (опечатка при вводе).
+    # Не «чиним» молча перестановкой — это исказило бы план. Отбрасываем неверное
+    # окончание, чтобы не рисовать полосу отрицательной длины и не отдавать в
+    # Google Timeline строку, которую он отвергнет; факт попадёт в блок пробелов.
+    if start and end and end < start:
+        return start, None, derived
     return start, end, derived
+
+
+def _epic_hard_end(epic: Epic, tasks: list[Task]) -> datetime | None:
+    """Крайний срок эпика; иначе самый ранний крайний срок среди его задач.
+
+    Именно ранний: первый сорванный дедлайн внутри эпика — уже проблема эпика.
+    """
+    if epic.hard_end:
+        return epic.hard_end
+    hard = [t.hard_end for t in tasks if t.hard_end]
+    return min(hard) if hard else None
 
 
 def _group_by_project(
@@ -179,11 +237,15 @@ def _build_kpi(projects: list[ProjectSummary]) -> SummaryKpi:
         tasks=tasks_total,
         epics_late=sum(1 for e in epics if e.health is Health.LATE),
         epics_risk=sum(1 for e in epics if e.health is Health.RISK),
-        epics_no_date=sum(1 for e in epics if e.end_date is None),
+        epics_no_date=sum(1 for e in epics if e.end_date is None and e.hard_end is None),
         epics_idle=sum(1 for e in epics if e.is_idle),
+        epics_open_ended=sum(1 for e in epics if e.open_ended),
         tasks_without_date=without_date,
         tasks_without_assignee=sum(e.tasks_without_assignee for e in epics),
         date_coverage_pct=coverage,
+        tasks_with_hard_deadline=sum(
+            1 for e in epics for t in e.tasks if t.hard_end is not None
+        ),
     )
 
 
@@ -195,14 +257,17 @@ _FAR_FUTURE = datetime.max
 def _task_sort_key(task: Task, health: Health) -> tuple:
     return (
         -HEALTH_SEVERITY[health],
-        task.effective_end or _FAR_FUTURE,
+        task.nearest_end or _FAR_FUTURE,
         -(task.priority or 0),
         task.title,
     )
 
 
 def _epic_sort_key(item: EpicSummary) -> tuple:
-    return (-HEALTH_SEVERITY[item.health], item.end_date or _FAR_FUTURE, item.epic.title)
+    nearest = min(
+        (d for d in (item.end_date, item.hard_end) if d), default=_FAR_FUTURE
+    )
+    return (-HEALTH_SEVERITY[item.health], nearest, item.epic.title)
 
 
 def _project_sort_key(item: ProjectSummary) -> tuple:
@@ -212,22 +277,32 @@ def _project_sort_key(item: ProjectSummary) -> tuple:
 # --- Данные для таймлайна ------------------------------------------------------
 
 
-def timeline_bounds(summary: Summary) -> tuple[date, date]:
-    """Границы дорожной карты, расширенные до краёв месяца.
+def timeline_epics(summary: Summary) -> list[EpicSummary]:
+    """Эпики, которые можно разместить на карте: нужна хотя бы плановая дата начала.
 
-    Если дат нет вообще (типичная ситуация, пока планы не заполнены) — показываем
-    ближайший квартал, чтобы шкала не выглядела сломанной.
+    Полоса без планового окончания рисуется открытой — см. `open_ended`.
     """
-    starts = [e.start_date.date() for e in summary.all_epics if e.start_date]
-    ends = [e.end_date.date() for e in summary.all_epics if e.end_date]
+    return [e for e in summary.all_epics if e.start_date]
+
+
+def timeline_bounds(summary: Summary) -> tuple[date, date]:
+    """Границы дорожной карты по МЯГКИМ датам, расширенные до краёв месяца.
+
+    Если дат нет вообще — показываем ближайший квартал, чтобы шкала не выглядела
+    сломанной.
+    """
+    placed = timeline_epics(summary)
+    starts = [e.start_date.date() for e in placed]
+    ends = [e.end_date.date() for e in placed if e.end_date]
     today = summary.generated_at.date()
 
-    if not starts and not ends:
+    if not starts:
         return _month_start(today), _month_end(today + timedelta(days=90))
 
-    first = min(starts + ends)
-    last = max(ends + starts)
-    # «Сегодня» должно попадать на шкалу, иначе маркер уедет за край.
+    first = min(starts)
+    # Открытые полосы тянутся до правого края, поэтому шкала обязана дойти минимум
+    # до сегодня — иначе такую полосу негде нарисовать.
+    last = max(ends + [today])
     return _month_start(min(first, today)), _month_end(max(last, today))
 
 

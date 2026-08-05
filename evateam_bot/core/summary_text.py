@@ -11,7 +11,7 @@ from datetime import datetime
 
 from .formatting import _esc
 from .messages import OutgoingMessage
-from .models import EpicSummary, Health, Summary
+from .models import EpicSummary, Health, HealthReason, Summary
 
 #: Эмодзи светофора. Единственный доступный «цвет» в Telegram.
 HEALTH_EMOJI: dict[Health, str] = {
@@ -22,7 +22,7 @@ HEALTH_EMOJI: dict[Health, str] = {
 }
 
 HEALTH_LABEL: dict[Health, str] = {
-    Health.LATE: "отстаёт",
+    Health.LATE: "срыв срока",
     Health.RISK: "под угрозой",
     Health.OK: "по плану",
     Health.NO_DATE: "без срока",
@@ -102,7 +102,7 @@ def _verdict(summary: Summary) -> str:
     kpi = summary.kpi
     parts = []
     if kpi.epics_late:
-        parts.append(f"🔴 отстаёт эпиков: {kpi.epics_late}")
+        parts.append(f"🔴 сорван крайний срок у эпиков: {kpi.epics_late}")
     if kpi.epics_risk:
         parts.append(f"🟡 под угрозой: {kpi.epics_risk}")
     if parts:
@@ -131,13 +131,7 @@ def _epic_line(item: EpicSummary) -> str:
     epic = item.epic
     project = f"[{_esc(epic.project_name)}] " if epic.project_name else ""
     code = _link(epic.code, epic.url)
-    tail = []
-    if item.days_left is not None:
-        tail.append(
-            f"просрочен на {abs(item.days_left)} дн."
-            if item.days_left < 0
-            else f"осталось {item.days_left} дн."
-        )
+    tail = [note for note in (_deadline_note(item),) if note]
     if item.is_idle:
         tail.append("нет задач в работе")
     elif item.total:
@@ -146,17 +140,49 @@ def _epic_line(item: EpicSummary) -> str:
     return f"{code}{project}{_esc(epic.title)}{suffix}"
 
 
+def _deadline_note(item: EpicSummary) -> str:
+    """Назвать нарушенный срок: крайний и плановый — разные вещи."""
+    if item.reason is HealthReason.LATE_HARD and item.days_left_hard is not None:
+        return f"просрочен крайний срок на {abs(item.days_left_hard)} дн."
+    if item.reason is HealthReason.BEHIND_PLAN and item.days_left is not None:
+        return f"отстаёт от плана на {abs(item.days_left)} дн."
+    if item.reason is HealthReason.DUE_SOON:
+        if item.days_left_hard is not None and item.days_left_hard >= 0:
+            return f"крайний срок через {item.days_left_hard} дн."
+        if item.days_left is not None and item.days_left >= 0:
+            return f"плановый срок через {item.days_left} дн."
+    if item.open_ended:
+        return "окончание не задано"
+    return ""
+
+
 def _blockers_section(summary: Summary, max_items: int) -> list[str]:
-    blockers = summary.blockers
-    if not blockers:
+    lines: list[str] = []
+    lines += _task_section(
+        "⛔ Сорван крайний срок", summary.blockers, max_items, hard=True
+    )
+    lines += _task_section(
+        "🟡 Отстают от плана", summary.behind_plan, max_items, hard=False
+    )
+    return lines
+
+
+def _task_section(
+    title: str, rows: list[tuple[EpicSummary, "object"]], max_items: int, *, hard: bool
+) -> list[str]:
+    if not rows:
         return []
-    lines = ["", "<b>⛔ Блокеры</b>"]
-    for item, task in blockers[:max_items]:
+    lines = ["", f"<b>{title}</b>"]
+    for _, task in rows[:max_items]:
         who = _esc(task.assignee) if task.assignee else "без исполнителя"
-        when = task.effective_end.strftime("%d.%m") if task.effective_end else "—"
-        lines.append(f"• {_link(task.code, task.url)}{_esc(task.title)} — {who}, срок {when}")
-    if len(blockers) > max_items:
-        lines.append(f"  …и ещё {len(blockers) - max_items}")
+        end = task.hard_end if hard else task.soft_end
+        when = end.strftime("%d.%m") if end else "—"
+        label = "крайний" if hard else "план"
+        lines.append(
+            f"• {_link(task.code, task.url)}{_esc(task.title)} — {who}, {label} {when}"
+        )
+    if len(rows) > max_items:
+        lines.append(f"  …и ещё {len(rows) - max_items}")
     return lines
 
 
@@ -166,8 +192,10 @@ def _gaps_section(summary: Summary) -> list[str]:
     gaps = []
     if kpi.epics_no_date:
         gaps.append(f"эпиков без сроков: {kpi.epics_no_date}")
+    if kpi.epics_open_ended:
+        gaps.append(f"эпиков без планового окончания: {kpi.epics_open_ended}")
     if kpi.tasks_without_date:
-        gaps.append(f"задач без даты: {kpi.tasks_without_date}")
+        gaps.append(f"задач без плановой даты: {kpi.tasks_without_date}")
     if kpi.tasks_without_assignee:
         gaps.append(f"задач без исполнителя: {kpi.tasks_without_assignee}")
     if kpi.epics_idle:

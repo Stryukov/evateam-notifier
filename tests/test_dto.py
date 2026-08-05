@@ -45,16 +45,76 @@ def test_parse_task_reads_summary_fields():
     )
     assert task.status_code == "in_progress"
     assert task.plan_start == datetime(2026, 8, 1)
-    assert task.effective_end == datetime(2026, 8, 31)
+    assert task.soft_end == datetime(2026, 8, 31)
     assert task.epic_id == "CmfTask:e1"
     assert task.project_id == "CmfProject:p1"
     assert task.assignee == "Иванов"
 
 
-def test_parse_task_effective_end_falls_back_to_deadline():
-    task = dto.parse_task({"id": "1", "name": "x", "deadline": "2026-08-10"})
+def test_plan_dates_come_from_gantt_object():
+    """Интерфейс пишет плановые даты в CmfGanttTask, а не в поля самой задачи.
+
+    Реальный случай BLT-33: plan_*_date на CmfTask пустые, даты — в op_gantt_task.
+    """
+    task = dto.parse_task(
+        {
+            "id": "CmfTask:1",
+            "code": "BLT-33",
+            "name": "Подготовка MVP workflow n8n",
+            "plan_start_date": None,
+            "plan_end_date": None,
+            "deadline": "2026-08-11T08:00:00",
+            "op_gantt_task": {
+                "id": "CmfGanttTask:g1",
+                "sched_start_date": "2026-07-23T18:00:00",
+                "sched_finish_date": "2026-08-07T03:00:00",
+            },
+        }
+    )
+    assert task.plan_start == datetime(2026, 7, 23, 18, 0)  # мягкий
+    assert task.plan_end == datetime(2026, 8, 7, 3, 0)  # мягкий
+    assert task.deadline == datetime(2026, 8, 11, 8, 0)  # жёсткий
+    assert task.soft_end != task.hard_end  # два разных срока, не склеены
+
+
+def test_gantt_dates_fall_back_to_task_fields():
+    task = dto.parse_task(
+        {"id": "1", "name": "x", "plan_start_date": "2026-08-01", "plan_end_date": "2026-08-31"}
+    )
+    assert task.plan_start == datetime(2026, 8, 1)
+    assert task.plan_end == datetime(2026, 8, 31)
+
+
+def test_gantt_as_bare_id_string_yields_no_dates():
+    """Регресс на _rel_key: id гант-объекта не должен притвориться датой."""
+    task = dto.parse_task({"id": "1", "name": "x", "op_gantt_task": "CmfGanttTask:g1"})
+    assert task.plan_start is None
     assert task.plan_end is None
-    assert task.effective_end == datetime(2026, 8, 10)
+
+
+def test_epic_reads_gantt_plan_dates():
+    epic = dto.parse_epic(
+        {
+            "id": "CmfTask:e1",
+            "code": "ZAT-17",
+            "name": "Epic ЛК ЮЛ",
+            "op_gantt_task": {
+                "sched_start_date": "2028-03-20T18:00:00",
+                "sched_finish_date": "2028-07-11T10:00:00",
+            },
+        }
+    )
+    assert epic.plan_start == datetime(2028, 3, 20, 18, 0)
+    assert epic.soft_end == datetime(2028, 7, 11, 10, 0)
+    assert epic.hard_end is None
+
+
+def test_nearest_end_picks_earliest_of_two():
+    task = dto.parse_task(
+        {"id": "1", "name": "x", "deadline": "2026-08-11",
+         "op_gantt_task": {"sched_finish_date": "2026-08-07"}}
+    )
+    assert task.nearest_end == datetime(2026, 8, 7)
 
 
 def test_parse_epic_prefers_parent_as_project():

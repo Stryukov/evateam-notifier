@@ -11,7 +11,7 @@ from datetime import date, datetime
 
 from .formatting import _esc, plural
 from .models import EpicSummary, Health, ProjectSummary, Summary
-from .summary import month_ticks, position_percent, timeline_bounds
+from .summary import month_ticks, position_percent, timeline_bounds, timeline_epics
 from .summary_text import HEALTH_EMOJI, HEALTH_LABEL
 
 _CSS = """
@@ -68,6 +68,12 @@ color:#fff;font-size:11px;line-height:16px;padding:0 6px;white-space:nowrap;over
 .tl-bar.ok{background:var(--ok)}.tl-bar.no_date{background:var(--none)}
 .tl-bar.derived{background-image:repeating-linear-gradient(45deg,
 rgba(255,255,255,.35) 0 5px,transparent 5px 10px)}
+/* Полоса без планового окончания — растворяется вправо. */
+.tl-bar.open{-webkit-mask-image:linear-gradient(to right,#000 60%,transparent);
+mask-image:linear-gradient(to right,#000 60%,transparent)}
+.tl-hard{position:absolute;top:0;height:22px;width:2px;background:var(--late)}
+.tl-hard::after{content:"▼";position:absolute;top:-11px;left:-4px;
+font-size:9px;color:var(--late)}
 .tl-today{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--late);opacity:.7}
 .note{color:var(--muted);font-size:13px;margin-top:12px}
 footer{margin-top:32px;padding-top:14px;border-top:1px solid var(--line);
@@ -136,7 +142,7 @@ def _empty_block(summary: Summary) -> str:
 def _verdict_block(summary: Summary) -> str:
     kpi = summary.kpi
     if kpi.epics_late:
-        tone, text = "late", f"🔴 Отстаёт эпиков: {kpi.epics_late}"
+        tone, text = "late", f"🔴 Сорван крайний срок у эпиков: {kpi.epics_late}"
         if kpi.epics_risk:
             text += f", под угрозой: {kpi.epics_risk}"
     elif kpi.epics_risk:
@@ -167,8 +173,9 @@ def _kpi_block(summary: Summary) -> str:
 
 def _timeline_block(summary: Summary) -> str:
     start, end = timeline_bounds(summary)
-    dated = [e for e in summary.all_epics if e.start_date and e.end_date]
-    undated = [e for e in summary.all_epics if not (e.start_date and e.end_date)]
+    dated = timeline_epics(summary)
+    placed = {item.epic.id for item in dated}
+    undated = [e for e in summary.all_epics if e.epic.id not in placed]
 
     ticks = "".join(
         f'<div class="tl-tick" style="left:{offset:.2f}%">{_esc(label)}</div>'
@@ -209,17 +216,33 @@ def _timeline_block(summary: Summary) -> str:
 
 def _timeline_row(item: EpicSummary, start: date, end: date) -> str:
     left = position_percent(item.start_date.date(), start, end)
-    right = position_percent(item.end_date.date(), start, end)
+    if item.end_date:
+        right = position_percent(item.end_date.date(), start, end)
+        span = f"{item.start_date.strftime('%d.%m')} → {item.end_date.strftime('%d.%m')}"
+        open_cls = ""
+    else:
+        # Окончание не задано — тянем полосу до правого края и растворяем её.
+        right = 100.0
+        span = f"{item.start_date.strftime('%d.%m')} → ?"
+        open_cls = " open"
     width = max(right - left, 0.6)
-    derived = " derived" if item.dates_are_derived else ""
-    span = (
-        f"{item.start_date.strftime('%d.%m')} → {item.end_date.strftime('%d.%m')}"
-    )
+
+    classes = f"{item.health.value}{' derived' if item.dates_are_derived else ''}{open_cls}"
+    title = "окончание не задано" if item.open_ended else span
     label = f"{item.epic.code} · {item.epic.title}" if item.epic.code else item.epic.title
+
+    # Крайний срок — отдельная засечка, он живёт по своей шкале.
+    hard = ""
+    if item.hard_end:
+        hard_pos = position_percent(item.hard_end.date(), start, end)
+        hard = (
+            f'<div class="tl-hard" style="left:{hard_pos:.2f}%" '
+            f'title="крайний срок {item.hard_end.strftime("%d.%m.%Y")}"></div>'
+        )
     return (
         f'<div class="tl-row"><div class="tl-label" title="{_esc(label)}">{_esc(label)}</div>'
-        f'<div class="tl-track"><div class="tl-bar {item.health.value}{derived}" '
-        f'style="left:{left:.2f}%;width:{width:.2f}%">{span}</div></div></div>'
+        f'<div class="tl-track"><div class="tl-bar {classes}" title="{_esc(title)}" '
+        f'style="left:{left:.2f}%;width:{width:.2f}%">{span}</div>{hard}</div></div>'
     )
 
 
@@ -238,7 +261,7 @@ def _attention_block(summary: Summary) -> str:
     return (
         "<h2>Требуют решения</h2>"
         "<table><thead><tr><th></th><th>Эпик</th><th>Проект</th>"
-        "<th>Плановый конец</th><th>Комментарий</th></tr></thead>"
+        "<th>Сроки</th><th>Комментарий</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
 
@@ -274,7 +297,14 @@ def _project_card(project: ProjectSummary) -> str:
 def _epic_block(item: EpicSummary) -> str:
     badges = [f'<span class="badge {_tone(item.health)}">{HEALTH_LABEL[item.health]}</span>']
     if item.end_date:
-        badges.append(f'<span class="badge">до {item.end_date.strftime("%d.%m.%Y")}</span>')
+        badges.append(f'<span class="badge">план до {item.end_date.strftime("%d.%m.%Y")}</span>')
+    elif item.open_ended:
+        badges.append('<span class="badge">окончание не задано</span>')
+    if item.hard_end:
+        badges.append(
+            f'<span class="badge {"late" if (item.days_left_hard or 0) < 0 else ""}">'
+            f'крайний {item.hard_end.strftime("%d.%m.%Y")}</span>'
+        )
     if item.dates_are_derived:
         badges.append('<span class="badge">даты из задач</span>')
     if item.epic.responsible:
@@ -292,15 +322,30 @@ def _epic_block(item: EpicSummary) -> str:
         f"<td>{_task_link(task)}</td>"
         f"<td>{_esc(task.status_name)}</td>"
         f"<td>{_cell(task.assignee, 'без исполнителя')}</td>"
-        f"<td>{_cell(_fmt_date(task.effective_end), 'без срока')}</td></tr>"
+        f"<td>{_cell(_fmt_date(task.soft_end), 'без срока')}</td>"
+        f"<td>{_hard_cell(item, task)}</td></tr>"
         for task in item.tasks
     )
     return (
         head
         + "<table><thead><tr><th></th><th>Задача</th><th>Статус</th>"
-        "<th>Исполнитель</th><th>Плановая дата</th></tr></thead>"
+        "<th>Исполнитель</th><th>Плановая дата</th><th>Крайний срок</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
+
+
+def _hard_cell(item: EpicSummary, task) -> str:
+    """Крайний срок; просроченный — красным, это сорванное обязательство.
+
+    Просрочку не пересчитываем: задачи с сорванным крайним сроком уже отобраны
+    в `item.blockers` на едином `now`.
+    """
+    if not task.hard_end:
+        return '<span class="miss">не задан</span>'
+    text = _esc(task.hard_end.strftime("%d.%m.%Y"))
+    if task in item.blockers:
+        return f'<b style="color:var(--late)">{text}</b>'
+    return text
 
 
 def _footer(summary: Summary) -> str:
@@ -309,9 +354,16 @@ def _footer(summary: Summary) -> str:
         "<footer>"
         f"Просмотрено эпиков: {summary.epics_total_scanned}, "
         f"в отчёте: {kpi.epics}, без распознанного статуса: {summary.epics_unknown_status}. "
-        f"Эпиков без задач в работе: {kpi.epics_idle}. "
-        "Статус считается автоматически по плановым датам: 🔴 срок прошёл, "
-        f"🟡 срок в пределах {summary.risk_days} дн., 🟢 позже, ⚪ срок не задан."
+        f"Эпиков без задач в работе: {kpi.epics_idle}."
+        "<br><br>"
+        "<b>Два срока.</b> «Плановая дата окончания» — мягкий срок, по нему строится "
+        "дорожная карта. «Крайний срок» — жёсткое обязательство, на диаграмме показан "
+        "красной засечкой ▼."
+        "<br>"
+        "<b>Статус считается автоматически, жёсткий срок строже мягкого:</b> "
+        "🔴 сорван крайний срок · 🟡 отстаём от плановой даты либо любой срок в пределах "
+        f"{summary.risk_days} дн. · 🟢 оба срока впереди · ⚪ сроки не заданы. "
+        "Статус эпика и проекта — худший из дочерних."
         "</footer>"
     )
 
@@ -341,18 +393,34 @@ def _task_link(task) -> str:
 def _task_dot(item: EpicSummary, task) -> str:
     if task in item.blockers:
         return HEALTH_EMOJI[Health.LATE]
-    if task.effective_end is None:
+    if task in item.behind_plan:
+        return HEALTH_EMOJI[Health.RISK]
+    if task.soft_end is None and task.hard_end is None:
         return HEALTH_EMOJI[Health.NO_DATE]
     return ""
 
 
 def _deadline_cell(item: EpicSummary) -> str:
-    if not item.end_date:
-        return '<span class="miss">не задан</span>'
-    tail = ""
-    if item.days_left is not None and item.days_left < 0:
-        tail = f" (просрочен на {abs(item.days_left)} дн.)"
-    return _esc(item.end_date.strftime("%d.%m.%Y") + tail)
+    """Плановая дата окончания и, отдельной строкой, крайний срок."""
+    parts = []
+    if item.end_date:
+        text = item.end_date.strftime("%d.%m.%Y")
+        if item.days_left is not None and item.days_left < 0:
+            text += f" (отстаёт на {abs(item.days_left)} дн.)"
+        parts.append(_esc(text))
+    elif item.open_ended:
+        parts.append('<span class="miss">окончание не задано</span>')
+    else:
+        parts.append('<span class="miss">не задана</span>')
+
+    if item.hard_end:
+        text = "крайний: " + item.hard_end.strftime("%d.%m.%Y")
+        if item.days_left_hard is not None and item.days_left_hard < 0:
+            text += f" (просрочен на {abs(item.days_left_hard)} дн.)"
+            parts.append(f'<b style="color:var(--late)">{_esc(text)}</b>')
+        else:
+            parts.append(f'<span class="miss">{_esc(text)}</span>')
+    return "<br>".join(parts)
 
 
 def _epic_note(item: EpicSummary) -> str:
@@ -360,9 +428,11 @@ def _epic_note(item: EpicSummary) -> str:
         return "нет задач в работе"
     notes = [f"задач: {item.total}"]
     if item.blockers:
-        notes.append(f"просрочено: {len(item.blockers)}")
+        notes.append(f"сорван крайний срок: {len(item.blockers)}")
+    if item.behind_plan:
+        notes.append(f"отстают от плана: {len(item.behind_plan)}")
     if item.tasks_without_date:
-        notes.append(f"без срока: {item.tasks_without_date}")
+        notes.append(f"без плановой даты: {item.tasks_without_date}")
     if item.tasks_without_assignee:
         notes.append(f"без исполнителя: {item.tasks_without_assignee}")
     return ", ".join(notes)

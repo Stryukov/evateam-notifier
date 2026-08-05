@@ -46,6 +46,15 @@ EPIC_LOGIC_PREFIX = "task.epic"
 # IN_PROGRESS — в работе, IN_REVIEW — ждут подтверждения закрытия.
 ACTIVE_STATUS_TYPES = ("IN_PROGRESS", "IN_REVIEW")
 
+# Плановые даты («мягкий» срок) живут НЕ на CmfTask, а в связанном CmfGanttTask:
+# CmfTask.op_gantt_task -> sched_start_date / sched_finish_date. Именно их показывает
+# интерфейс как «Плановая дата начала/окончания».
+# ВНИМАНИЕ: у CmfTask есть собственные plan_start_date/plan_end_date — это ДРУГАЯ пара
+# полей, интерфейс её не заполняет (всегда null). Оставлены только как запасной источник.
+# `deadline` на CmfTask — «Крайний срок», жёсткий дедлайн.
+GANTT_START_FIELD = "op_gantt_task.sched_start_date"
+GANTT_END_FIELD = "op_gantt_task.sched_finish_date"
+
 # Важно: различать статусы надо по `status.code`, а не по `cache_status_type` —
 # у кода `pause` («Пауза», «Приостановлен») тип как раз OPEN, и по типу его не отделить.
 EPIC_FIELDS = [
@@ -57,6 +66,8 @@ EPIC_FIELDS = [
     "cache_status_type",
     "status.code",
     "status.name",
+    GANTT_START_FIELD,
+    GANTT_END_FIELD,
     "plan_start_date",
     "plan_end_date",
     "deadline",
@@ -75,6 +86,8 @@ EPIC_TASK_FIELDS = TASK_FIELDS + [
     "project_id",
     "status.code",
     "status.name",
+    GANTT_START_FIELD,
+    GANTT_END_FIELD,
     "plan_start_date",
     "plan_end_date",
     "responsible.name",

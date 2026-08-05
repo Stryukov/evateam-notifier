@@ -41,8 +41,9 @@ def render_timeline_csv(summary: Summary) -> str:
 
     for project in summary.projects:
         for item in project.epics:
-            # Timeline не разместит карточку без обеих дат — такие пропускаем,
-            # их количество видно в HTML и в сводке.
+            # Даты берём только плановые (мягкие) — дорожная карта строится по ним.
+            # Timeline не разместит карточку без обеих дат, поэтому эпики без
+            # планового окончания пропускаем; их количество видно в HTML и в сводке.
             if not (item.start_date and item.end_date):
                 continue
             epic = item.epic
@@ -59,9 +60,9 @@ def render_timeline_csv(summary: Summary) -> str:
 
 
 def _detail(item) -> str:
-    if item.is_idle:
-        return "нет задач в работе"
-    parts = [f"задач: {item.total}"]
+    parts = ["нет задач в работе"] if item.is_idle else [f"задач: {item.total}"]
+    if item.hard_end:
+        parts.append(f"крайний срок: {item.hard_end.strftime(DATE_FORMAT)}")
     people = sorted({t.assignee for t in item.tasks if t.assignee})
     if people:
         parts.append(", ".join(people))

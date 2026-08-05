@@ -48,8 +48,8 @@ class Task:
     # Поля для сводки по проектам. Дописаны в конец со значениями по умолчанию,
     # чтобы не ломать существующие конструкторы (дайджест, просрочки, тесты).
     status_code: str | None = None  # CmfStatus.code: in_progress / in_review / pause / ...
-    plan_start: datetime | None = None
-    plan_end: datetime | None = None
+    plan_start: datetime | None = None  # мягкий: «Плановая дата начала»
+    plan_end: datetime | None = None  # мягкий: «Плановая дата окончания»
     assignee: str | None = None  # responsible.name, фолбэк executors[0].name
     epic_id: str | None = None
     project_id: str | None = None
@@ -62,9 +62,19 @@ class Task:
         return self.deadline < now
 
     @property
-    def effective_end(self) -> datetime | None:
-        """Плановый конец: приоритет у plan_end, иначе дедлайн."""
-        return self.plan_end or self.deadline
+    def soft_end(self) -> datetime | None:
+        """Плановая дата окончания — мягкий срок, по нему строится дорожная карта."""
+        return self.plan_end
+
+    @property
+    def hard_end(self) -> datetime | None:
+        """Крайний срок — жёсткое обязательство."""
+        return self.deadline
+
+    @property
+    def nearest_end(self) -> datetime | None:
+        """Ближайший из значимых сроков. Только для сортировки, не для светофора."""
+        return min((d for d in (self.plan_end, self.deadline) if d), default=None)
 
 
 @dataclass
@@ -92,12 +102,26 @@ class Digest:
 
 
 class Health(str, Enum):
-    """Светофор по плановым датам. Считается автоматически, вручную не проставляется."""
+    """Светофор по срокам. Считается автоматически, вручную не проставляется.
 
-    LATE = "late"  # 🔴 просрочено
-    RISK = "risk"  # 🟡 под угрозой (срок близко)
+    Жёсткий срок строже мягкого: красным становится только сорванный Крайний срок,
+    отставание от плановой даты — жёлтое.
+    """
+
+    LATE = "late"  # 🔴 сорван Крайний срок
+    RISK = "risk"  # 🟡 отстаём от плана либо срок на подходе
     OK = "ok"  # 🟢 по плану
-    NO_DATE = "no_date"  # ⚪ срок не задан
+    NO_DATE = "no_date"  # ⚪ сроки не заданы
+
+
+class HealthReason(str, Enum):
+    """Почему именно такой цвет — чтобы отчёт мог назвать причину, а не только покрасить."""
+
+    LATE_HARD = "late_hard"  # просрочен Крайний срок
+    BEHIND_PLAN = "behind_plan"  # просрочена Плановая дата окончания
+    DUE_SOON = "due_soon"  # срок в пределах risk_days
+    ON_TRACK = "on_track"
+    NO_DATE = "no_date"
 
 
 #: Вес для роллапа «худший ребёнок». NO_DATE — самый слабый: эпик без даты, но с
@@ -124,15 +148,23 @@ class Epic:
     project_id: str | None = None
     project_name: str | None = None
     responsible: str | None = None
-    plan_start: datetime | None = None
-    plan_end: datetime | None = None
-    deadline: datetime | None = None
+    plan_start: datetime | None = None  # мягкий срок, из CmfGanttTask
+    plan_end: datetime | None = None  # мягкий срок, из CmfGanttTask
+    deadline: datetime | None = None  # жёсткий: «Крайний срок»
     url: str | None = None
     is_active: bool = True
 
     @property
-    def effective_end(self) -> datetime | None:
-        return self.plan_end or self.deadline
+    def soft_end(self) -> datetime | None:
+        return self.plan_end
+
+    @property
+    def hard_end(self) -> datetime | None:
+        return self.deadline
+
+    @property
+    def nearest_end(self) -> datetime | None:
+        return min((d for d in (self.plan_end, self.deadline) if d), default=None)
 
 
 @dataclass(frozen=True)
@@ -152,16 +184,23 @@ class EpicSummary:
     epic: Epic
     tasks: list[Task]
     health: Health
+    reason: HealthReason = HealthReason.NO_DATE
+    # Мягкие даты — на них строится дорожная карта.
     start_date: datetime | None = None
     end_date: datetime | None = None
-    days_left: int | None = None  # < 0 — просрочка
+    # Жёсткий срок — обязательство.
+    hard_end: datetime | None = None
+    days_left: int | None = None  # до планового конца; < 0 — отстаём от плана
+    days_left_hard: int | None = None  # до крайнего срока; < 0 — просрочен
     in_progress: int = 0
     in_review: int = 0
     tasks_without_date: int = 0
     tasks_without_assignee: int = 0
-    blockers: list[Task] = field(default_factory=list)  # просроченные задачи эпика
+    blockers: list[Task] = field(default_factory=list)  # просрочен КРАЙНИЙ срок
+    behind_plan: list[Task] = field(default_factory=list)  # просрочена плановая дата
     is_idle: bool = False  # нет ни одной активной задачи
     dates_are_derived: bool = False  # даты взяты из задач, своих у эпика нет
+    open_ended: bool = False  # есть плановое начало, но нет планового окончания
 
     @property
     def total(self) -> int:
@@ -208,9 +247,11 @@ class SummaryKpi:
     epics_risk: int = 0
     epics_no_date: int = 0
     epics_idle: int = 0
+    epics_open_ended: int = 0  # начало есть, планового окончания нет
     tasks_without_date: int = 0
     tasks_without_assignee: int = 0
-    date_coverage_pct: int = 0
+    date_coverage_pct: int = 0  # доля задач с плановой датой окончания
+    tasks_with_hard_deadline: int = 0
 
 
 @dataclass(frozen=True)
@@ -241,4 +282,10 @@ class Summary:
 
     @property
     def blockers(self) -> list[tuple[EpicSummary, Task]]:
+        """Задачи с сорванным Крайним сроком — самое жёсткое, что есть в отчёте."""
         return [(e, task) for e in self.all_epics for task in e.blockers]
+
+    @property
+    def behind_plan(self) -> list[tuple[EpicSummary, Task]]:
+        """Задачи, отставшие от плановой даты, но ещё не сорвавшие Крайний срок."""
+        return [(e, task) for e in self.all_epics for task in e.behind_plan]

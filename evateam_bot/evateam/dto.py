@@ -126,6 +126,8 @@ def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
         maybe = priority_raw.get("orderno") or priority_raw.get("weight")
         priority = int(maybe) if isinstance(maybe, (int, float)) else None
 
+    plan_start, plan_end = plan_dates(raw)
+
     return Task(
         id=task_id,
         code=code,
@@ -139,12 +141,31 @@ def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
         url=url,
         is_active=is_active,
         status_code=_rel_key(raw.get("status"), "code"),
-        plan_start=parse_datetime(raw.get("plan_start_date")),
-        plan_end=parse_datetime(raw.get("plan_end_date")),
+        plan_start=plan_start,
+        plan_end=plan_end,
         assignee=_assignee(raw),
         epic_id=_rel_id(raw.get("epic")) or raw.get("epic_id"),
         project_id=_rel_id(raw.get("parent")) or raw.get("parent_id") or raw.get("project_id"),
     )
+
+
+def plan_dates(raw: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+    """Плановые («мягкие») даты начала и окончания.
+
+    Интерфейс EvaTeam пишет их в связанный CmfGanttTask (`op_gantt_task`), а не в
+    одноимённые поля самой задачи — те всегда пустые. Их оставляем запасным путём.
+
+    Строгий `_rel_key` здесь обязателен: `_rel_field` вернул бы id гант-объекта,
+    и `parse_datetime` молча отдал бы None вместо реальной даты.
+    """
+    gantt = raw.get("op_gantt_task")
+    start = parse_datetime(_rel_key(gantt, "sched_start_date")) or parse_datetime(
+        raw.get("plan_start_date")
+    )
+    end = parse_datetime(_rel_key(gantt, "sched_finish_date")) or parse_datetime(
+        raw.get("plan_end_date")
+    )
+    return start, end
 
 
 def _assignee(raw: dict[str, Any]) -> str | None:
@@ -168,6 +189,8 @@ def parse_epic(raw: dict[str, Any], *, url: str | None = None) -> Epic:
     elif isinstance(activity, bool):
         is_active = activity
 
+    plan_start, plan_end = plan_dates(raw)
+
     return Epic(
         id=str(raw.get("id") or ""),
         code=raw.get("code"),
@@ -179,8 +202,8 @@ def parse_epic(raw: dict[str, Any], *, url: str | None = None) -> Epic:
         project_id=_rel_id(raw.get("parent")) or raw.get("parent_id") or raw.get("project_id"),
         project_name=_rel_key(raw.get("parent"), "name") or _rel_key(raw.get("project"), "name"),
         responsible=_rel_key(raw.get("responsible"), "name"),
-        plan_start=parse_datetime(raw.get("plan_start_date")),
-        plan_end=parse_datetime(raw.get("plan_end_date")),
+        plan_start=plan_start,
+        plan_end=plan_end,
         deadline=parse_datetime(raw.get("deadline")),
         url=url,
         is_active=is_active,

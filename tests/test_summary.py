@@ -3,6 +3,7 @@ from datetime import date, datetime
 from evateam_bot.core.models import (
     Epic,
     Health,
+    HealthReason,
     Portfolio,
     StatusCategory,
     Task,
@@ -10,9 +11,10 @@ from evateam_bot.core.models import (
 from evateam_bot.core.summary import (
     SummaryOptions,
     build_summary,
-    date_health,
+    combined_health,
     month_ticks,
     timeline_bounds,
+    timeline_epics,
     worst,
 )
 
@@ -20,7 +22,7 @@ NOW = datetime(2026, 8, 5, 12, 0)
 
 
 def _epic(id_, *, code=None, title="Эпик", status="in_progress", project="p1",
-          project_name="Проект", start=None, end=None):
+          project_name="Проект", start=None, end=None, hard=None):
     return Epic(
         id=id_,
         code=code or id_,
@@ -32,11 +34,12 @@ def _epic(id_, *, code=None, title="Эпик", status="in_progress", project="p1
         project_name=project_name,
         plan_start=start,
         plan_end=end,
+        deadline=hard,
     )
 
 
-def _task(id_, *, end=None, assignee="Иванов", category=StatusCategory.IN_PROGRESS,
-          epic="e1", priority=None, title="Задача"):
+def _task(id_, *, end=None, hard=None, assignee="Иванов",
+          category=StatusCategory.IN_PROGRESS, epic="e1", priority=None, title="Задача"):
     return Task(
         id=id_,
         code=id_,
@@ -44,6 +47,7 @@ def _task(id_, *, end=None, assignee="Иванов", category=StatusCategory.IN_
         status_name="В работе",
         status_category=category,
         plan_end=end,
+        deadline=hard,
         assignee=assignee,
         epic_id=epic,
         priority=priority,
@@ -62,12 +66,33 @@ def _portfolio(epics, tasks_by_epic=None, projects=None, orphans=None):
 # --- светофор ------------------------------------------------------------------
 
 
-def test_date_health_thresholds():
-    assert date_health(None, NOW, 7) is Health.NO_DATE
-    assert date_health(datetime(2026, 8, 4), NOW, 7) is Health.LATE
-    assert date_health(datetime(2026, 8, 5, 0, 0), NOW, 7) is Health.RISK  # сегодня — ещё не поздно
-    assert date_health(datetime(2026, 8, 12), NOW, 7) is Health.RISK  # ровно граница
-    assert date_health(datetime(2026, 8, 13), NOW, 7) is Health.OK  # граница + 1
+def _health(soft=None, hard=None, risk_days=7):
+    return combined_health(soft, hard, NOW, risk_days)
+
+
+def test_hard_deadline_is_stricter_than_soft():
+    """Ключевое правило: красный — только сорванный крайний срок."""
+    late_hard = _health(hard=datetime(2026, 8, 4))
+    assert late_hard == (Health.LATE, HealthReason.LATE_HARD)
+
+    # Плановая дата прошла, но крайнего срока нет — это ещё не срыв обязательства.
+    behind = _health(soft=datetime(2026, 7, 1))
+    assert behind == (Health.RISK, HealthReason.BEHIND_PLAN)
+
+    # План просрочен, крайний срок впереди — по-прежнему жёлтый.
+    assert _health(soft=datetime(2026, 7, 1), hard=datetime(2026, 12, 1))[0] is Health.RISK
+
+    # Крайний срок сорван — красный, даже если план ещё впереди.
+    assert _health(soft=datetime(2027, 1, 1), hard=datetime(2026, 8, 4))[0] is Health.LATE
+
+
+def test_health_thresholds_and_no_date():
+    assert _health() == (Health.NO_DATE, HealthReason.NO_DATE)
+    assert _health(soft=datetime(2026, 8, 5))[0] is Health.RISK  # сегодня — ещё не поздно
+    assert _health(soft=datetime(2026, 8, 12)) == (Health.RISK, HealthReason.DUE_SOON)
+    assert _health(soft=datetime(2026, 8, 13)) == (Health.OK, HealthReason.ON_TRACK)
+    # Приближение крайнего срока тоже красит в жёлтый.
+    assert _health(hard=datetime(2026, 8, 10))[1] is HealthReason.DUE_SOON
 
 
 def test_worst_prefers_late_over_missing_date():
@@ -114,15 +139,40 @@ def test_empty_status_codes_takes_everything():
 
 
 def test_overdue_task_makes_dateless_epic_red():
-    """Ключевое правило: пробел в дате не должен маскировать реальную просрочку."""
+    """Пробел в дате эпика не должен маскировать сорванный срок его задачи."""
     portfolio = _portfolio(
         [_epic("e1")],
-        {"e1": [_task("t1", end=datetime(2026, 7, 1))]},
+        {"e1": [_task("t1", hard=datetime(2026, 7, 1))]},
     )
     summary = build_summary(portfolio, now=NOW)
     epic = summary.all_epics[0]
     assert epic.health is Health.LATE
+    assert epic.reason is HealthReason.LATE_HARD
     assert [t.id for t in epic.blockers] == ["t1"]
+
+
+def test_task_behind_plan_is_amber_not_blocker():
+    portfolio = _portfolio(
+        [_epic("e1")],
+        {"e1": [_task("t1", end=datetime(2026, 7, 1))]},
+    )
+    epic = build_summary(portfolio, now=NOW).all_epics[0]
+    assert epic.health is Health.RISK
+    assert epic.blockers == []
+    assert [t.id for t in epic.behind_plan] == ["t1"]
+
+
+def test_epic_hard_end_is_earliest_of_tasks():
+    """Первый сорванный дедлайн внутри эпика — уже проблема эпика."""
+    portfolio = _portfolio(
+        [_epic("e1")],
+        {"e1": [
+            _task("later", hard=datetime(2026, 12, 1)),
+            _task("sooner", hard=datetime(2026, 9, 1)),
+        ]},
+    )
+    epic = build_summary(portfolio, now=NOW).all_epics[0]
+    assert epic.hard_end == datetime(2026, 9, 1)
 
 
 def test_everything_without_dates_stays_white():
@@ -147,6 +197,22 @@ def test_epic_dates_derived_from_tasks_when_missing():
     assert epic.dates_are_derived is True
     assert epic.start_date == datetime(2026, 8, 20)
     assert epic.end_date == datetime(2026, 10, 5)
+
+
+def test_inverted_dates_do_not_produce_negative_interval():
+    """Реальный случай SPT-16: плановое окончание раньше начала.
+
+    Молча менять даты местами нельзя — это исказит план. Отбрасываем окончание,
+    чтобы не отдать Google Timeline строку, которую он отвергнет.
+    """
+    portfolio = _portfolio(
+        [_epic("e1", start=datetime(2026, 7, 20))],
+        {"e1": [_task("t1", end=datetime(2026, 6, 5))]},
+    )
+    epic = build_summary(portfolio, now=NOW).all_epics[0]
+    assert epic.start_date == datetime(2026, 7, 20)
+    assert epic.end_date is None
+    assert epic.open_ended is True
 
 
 def test_own_epic_dates_win_over_tasks():
@@ -189,7 +255,7 @@ def test_projects_sorted_with_problems_first():
     portfolio = _portfolio(
         [
             _epic("green", project="p1", project_name="Зелёный", end=datetime(2027, 1, 1)),
-            _epic("red", project="p2", project_name="Красный", end=datetime(2026, 1, 1)),
+            _epic("red", project="p2", project_name="Красный", hard=datetime(2026, 1, 1)),
         ],
         projects={"p1": "Зелёный", "p2": "Красный"},
     )
@@ -229,7 +295,7 @@ def test_project_name_falls_back_to_epic_then_placeholder():
 def test_kpi_and_attention():
     portfolio = _portfolio(
         [
-            _epic("late", end=datetime(2026, 1, 1)),
+            _epic("late", hard=datetime(2026, 1, 1)),
             _epic("risk", end=datetime(2026, 8, 8)),
             _epic("ok", end=datetime(2027, 1, 1)),
             _epic("nodate"),
@@ -282,6 +348,42 @@ def test_timeline_bounds_always_include_today():
     portfolio = _portfolio([_epic("e1", start=datetime(2025, 1, 5), end=datetime(2025, 2, 1))])
     start, end = timeline_bounds(build_summary(portfolio, now=NOW))
     assert start <= NOW.date() <= end
+
+
+def test_open_ended_epic_is_flagged_and_placed_on_timeline():
+    """Начало есть, планового окончания нет — полоса тянется до правого края."""
+    portfolio = _portfolio([_epic("e1", start=datetime(2026, 7, 20))])
+    summary = build_summary(portfolio, now=NOW)
+    epic = summary.all_epics[0]
+
+    assert epic.open_ended is True
+    assert epic.start_date == datetime(2026, 7, 20)
+    assert epic.end_date is None
+    assert summary.kpi.epics_open_ended == 1
+    # На карту он попадает — достаточно начала.
+    assert [e.epic.id for e in timeline_epics(summary)] == ["e1"]
+
+
+def test_epic_with_only_end_is_not_placed_on_timeline():
+    portfolio = _portfolio([_epic("e1", end=datetime(2026, 9, 1))])
+    summary = build_summary(portfolio, now=NOW)
+    assert timeline_epics(summary) == []
+    assert summary.all_epics[0].open_ended is False
+
+
+def test_timeline_bounds_cover_today_for_open_ended():
+    portfolio = _portfolio([_epic("e1", start=datetime(2026, 7, 20))])
+    start, end = timeline_bounds(build_summary(portfolio, now=NOW))
+    assert start == date(2026, 7, 1)
+    assert end >= NOW.date()  # иначе открытую полосу негде нарисовать
+
+
+def test_hard_deadline_alone_does_not_place_on_timeline():
+    """Дорожная карта строится только по плановым датам."""
+    portfolio = _portfolio([_epic("e1", hard=datetime(2026, 9, 1))])
+    summary = build_summary(portfolio, now=NOW)
+    assert timeline_epics(summary) == []
+    assert summary.all_epics[0].hard_end == datetime(2026, 9, 1)
 
 
 def test_month_ticks_within_range():

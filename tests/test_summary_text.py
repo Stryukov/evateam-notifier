@@ -7,7 +7,7 @@ from evateam_bot.core.summary_text import empty_summary_message, summary_message
 NOW = datetime(2026, 8, 5, 12, 0)
 
 
-def _epic(id_, *, title="Эпик", end=None, project="Проект", url=None):
+def _epic(id_, *, title="Эпик", end=None, hard=None, project="Проект", url=None):
     return Epic(
         id=id_,
         code=id_.upper(),
@@ -18,11 +18,12 @@ def _epic(id_, *, title="Эпик", end=None, project="Проект", url=None):
         project_id="p1",
         project_name=project,
         plan_end=end,
+        deadline=hard,
         url=url,
     )
 
 
-def _task(id_, *, end=None, assignee="Иванов", title="Задача"):
+def _task(id_, *, end=None, hard=None, assignee="Иванов", title="Задача"):
     return Task(
         id=id_,
         code=id_.upper(),
@@ -30,6 +31,7 @@ def _task(id_, *, end=None, assignee="Иванов", title="Задача"):
         status_name="В работе",
         status_category=StatusCategory.IN_PROGRESS,
         plan_end=end,
+        deadline=hard,
         assignee=assignee,
         epic_id="e1",
     )
@@ -43,11 +45,11 @@ def _summary(epics, tasks_by_epic=None, **kwargs):
 
 
 def test_verdict_is_first_meaningful_line():
-    summary = _summary([_epic("e1", end=datetime(2026, 1, 1))])
+    summary = _summary([_epic("e1", hard=datetime(2026, 1, 1))])
     text = summary_message(summary).text
     lines = [line for line in text.split("\n") if line.strip()]
     assert "Сводка по проектам" in lines[0]
-    assert "отстаёт эпиков: 1" in lines[1]
+    assert "сорван крайний срок у эпиков: 1" in lines[1]
 
 
 def test_verdict_green_when_all_on_track():
@@ -73,27 +75,55 @@ def test_late_epics_listed_and_healthy_collapsed_to_count():
     assert "Здоровый один" not in text
 
 
-def test_overdue_epic_shows_days_late():
-    summary = _summary([_epic("e1", end=datetime(2026, 8, 1))])
-    assert "просрочен на 4 дн." in summary_message(summary).text
+def test_epic_note_distinguishes_hard_and_soft_overdue():
+    """Руководителю важно, какой именно срок нарушен."""
+    hard = _summary([_epic("e1", hard=datetime(2026, 8, 1))])
+    assert "просрочен крайний срок на 4 дн." in summary_message(hard).text
+
+    soft = _summary([_epic("e2", end=datetime(2026, 8, 1))])
+    assert "отстаёт от плана на 4 дн." in summary_message(soft).text
 
 
-def test_blockers_section_names_assignee_and_date():
+def test_hard_deadline_section_names_assignee_and_date():
     summary = _summary(
         [_epic("e1")],
-        {"e1": [_task("t1", end=datetime(2026, 7, 30), assignee="Петров", title="Сломано")]},
+        {"e1": [_task("t1", hard=datetime(2026, 7, 30), assignee="Петров", title="Сломано")]},
     )
     text = summary_message(summary).text
-    assert "Блокеры" in text
+    assert "Сорван крайний срок" in text
     assert "Сломано" in text and "Петров" in text and "30.07" in text
+
+
+def test_behind_plan_section_is_separate_from_blockers():
+    summary = _summary(
+        [_epic("e1")],
+        {"e1": [_task("t1", end=datetime(2026, 7, 30), title="Отстаёт")]},
+    )
+    text = summary_message(summary).text
+    assert "Отстают от плана" in text
+    assert "Сорван крайний срок" not in text
 
 
 def test_gaps_section_reports_planning_holes():
     summary = _summary([_epic("e1")], {"e1": [_task("t1", assignee=None)]})
     text = summary_message(summary).text
     assert "Пробелы в планировании" in text
-    assert "задач без даты: 1" in text
+    assert "задач без плановой даты: 1" in text
     assert "задач без исполнителя: 1" in text
+
+
+def test_open_ended_epic_is_noted():
+    from evateam_bot.core.models import Epic as _E
+
+    epic = _E(
+        id="e1", code="SPT-5", title="Договорная работа",
+        status_code="in_progress", status_name="В работе",
+        status_category=StatusCategory.IN_PROGRESS,
+        project_id="p1", project_name="Проект",
+        plan_start=datetime(2026, 7, 20),
+    )
+    # Статус такому эпику не определить, поэтому он идёт в блок пробелов.
+    assert "эпиков без планового окончания: 1" in summary_message(_summary([epic])).text
 
 
 def test_idle_epic_marked():

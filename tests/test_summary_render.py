@@ -11,7 +11,7 @@ from evateam_bot.core.summary_html import render_html
 NOW = datetime(2026, 8, 5, 12, 0)
 
 
-def _epic(id_, *, title="Эпик", start=None, end=None, project="p1",
+def _epic(id_, *, title="Эпик", start=None, end=None, hard=None, project="p1",
           project_name="Проект", url=None):
     return Epic(
         id=id_,
@@ -24,11 +24,12 @@ def _epic(id_, *, title="Эпик", start=None, end=None, project="p1",
         project_name=project_name,
         plan_start=start,
         plan_end=end,
+        deadline=hard,
         url=url,
     )
 
 
-def _task(id_, *, end=None, assignee="Иванов", title="Задача", epic="e1"):
+def _task(id_, *, end=None, hard=None, assignee="Иванов", title="Задача", epic="e1"):
     return Task(
         id=id_,
         code=id_.upper(),
@@ -36,6 +37,7 @@ def _task(id_, *, end=None, assignee="Иванов", title="Задача", epic=
         status_name="В работе",
         status_category=StatusCategory.IN_PROGRESS,
         plan_end=end,
+        deadline=hard,
         assignee=assignee,
         epic_id=epic,
     )
@@ -138,6 +140,41 @@ def test_problem_project_is_expanded_and_healthy_collapsed():
     assert '<details class="card">' in html  # здоровый свёрнут
 
 
+def test_open_ended_bar_is_drawn_and_marked():
+    """Начало есть, окончания нет — полоса до правого края, а не пропуск строки."""
+    html = render_html(_summary([_epic("e1", start=datetime(2026, 7, 20))]))
+    assert "tl-bar" in html
+    assert "open" in html
+    assert "окончание не задано" in html
+    assert "→ ?" in html
+
+
+def test_hard_deadline_shown_as_marker_on_timeline():
+    html = render_html(_summary([
+        _epic("e1", start=datetime(2026, 8, 1), end=datetime(2026, 9, 1),
+              hard=datetime(2026, 9, 20))
+    ]))
+    assert "tl-hard" in html
+    assert "крайний срок 20.09.2026" in html
+
+
+def test_task_table_has_both_date_columns():
+    summary = _summary(
+        [_epic("e1", hard=datetime(2026, 1, 1))],
+        {"e1": [_task("t1", end=datetime(2026, 9, 1), hard=datetime(2026, 9, 10))]},
+    )
+    html = render_html(summary)
+    assert "<th>Плановая дата</th>" in html
+    assert "<th>Крайний срок</th>" in html
+    assert "01.09.2026" in html and "10.09.2026" in html
+
+
+def test_timeline_uses_plan_dates_not_deadline():
+    """Дорожная карта строится по мягким срокам — эпик только с крайним не на карте."""
+    html = render_html(_summary([_epic("e1", hard=datetime(2026, 9, 1))]))
+    assert "дорожную карту построить не из чего" in html
+
+
 def test_missing_values_are_explicit():
     summary = _summary([_epic("e1", end=datetime(2026, 1, 1))],
                        {"e1": [_task("t1", assignee=None)]})
@@ -162,9 +199,14 @@ def test_empty_summary_html_explains_why():
 
 
 def test_verdict_reflects_state():
-    assert "Отстаёт эпиков: 1" in render_html(_summary([_epic("e1", end=datetime(2026, 1, 1))]))
+    late = render_html(_summary([_epic("e1", hard=datetime(2026, 1, 1))]))
+    assert "Сорван крайний срок у эпиков: 1" in late
     assert "Всё по плану" in render_html(_summary([_epic("e1", end=datetime(2027, 1, 1))]))
     assert "Сроков нет ни у одного эпика" in render_html(_summary([_epic("e1")]))
+    # Просроченная плановая дата без крайнего срока — жёлтая, не красная.
+    assert "Под угрозой эпиков: 1" in render_html(
+        _summary([_epic("e1", end=datetime(2026, 1, 1))])
+    )
 
 
 # --- CSV -----------------------------------------------------------------------
@@ -210,6 +252,20 @@ def test_csv_quotes_commas_in_russian_names():
     assert _rows(_summary([epic]))[1][0] == "E1 · Биллинг, этап 2"
 
 
-def test_csv_marks_overdue_epic():
-    summary = _summary([_epic("e1", start=datetime(2026, 1, 1), end=datetime(2026, 2, 1))])
-    assert _rows(summary)[1][5] == "Просрочено"
+def test_csv_color_reflects_two_deadlines():
+    behind = _summary([_epic("e1", start=datetime(2026, 1, 1), end=datetime(2026, 2, 1))])
+    assert _rows(behind)[1][5] == "Под угрозой"  # отстаёт от плана
+
+    late = _summary([
+        _epic("e1", start=datetime(2026, 1, 1), end=datetime(2026, 2, 1),
+              hard=datetime(2026, 3, 1))
+    ])
+    assert _rows(late)[1][5] == "Просрочено"  # сорван крайний срок
+
+
+def test_csv_detail_includes_hard_deadline():
+    summary = _summary([
+        _epic("e1", start=datetime(2026, 8, 1), end=datetime(2026, 9, 1),
+              hard=datetime(2026, 9, 15))
+    ])
+    assert "крайний срок: 2026-09-15" in _rows(summary)[1][4]
