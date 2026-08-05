@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .config import Settings, get_settings
+from .core.summary import SummaryOptions
 from .evateam.client import EvaTeamClient
+from .evateam.portfolio import EvaTeamPortfolio
 from .evateam.tasks import EvaTeamTasks
 from .service import BotService
 from .storage.repository import UserRepository
@@ -35,6 +37,7 @@ class App:
             proxy=proxy,
         )
         tasks_api = EvaTeamTasks(client, base_url=settings.evateam_base_url)
+        portfolio_api = EvaTeamPortfolio(client, base_url=settings.evateam_base_url)
 
         session_factory = make_session_factory(settings.db_path)
         repo = UserRepository(session_factory)
@@ -45,7 +48,17 @@ class App:
             tg = TelegramTransport(settings.telegram_bot_token, proxy=proxy)
             transports[tg.name] = tg
 
-        service = BotService(transports=transports, tasks_api=tasks_api, repo=repo)
+        service = BotService(
+            transports=transports,
+            tasks_api=tasks_api,
+            repo=repo,
+            portfolio_api=portfolio_api,
+            summary_options=SummaryOptions(
+                status_codes=settings.parsed_epic_status_codes(),
+                risk_days=settings.summary_risk_days,
+            ),
+            report_dir=settings.summary_output_dir,
+        )
         return cls(settings=settings, client=client, service=service, transports=transports)
 
     async def aclose(self) -> None:

@@ -12,8 +12,10 @@ from datetime import datetime
 from .core import formatting
 from .core.deadlines import find_overdue
 from .core.digest import build_digest
-from .core.models import Person
+from .core.models import Person, Summary
 from .core.onboarding import handle_person_query
+from .core.summary import SummaryOptions, build_summary
+from .evateam.portfolio import EvaTeamPortfolio
 from .evateam.tasks import EvaTeamTasks
 from .storage.repository import UserRepository
 from .transports.base import BotTransport, TransportName
@@ -28,10 +30,16 @@ class BotService:
         transports: dict[TransportName, BotTransport],
         tasks_api: EvaTeamTasks,
         repo: UserRepository,
+        portfolio_api: EvaTeamPortfolio | None = None,
+        summary_options: SummaryOptions | None = None,
+        report_dir: str = "data/reports",
     ) -> None:
         self._transports = transports
         self._tasks = tasks_api
         self._repo = repo
+        self._portfolio = portfolio_api
+        self._summary_options = summary_options or SummaryOptions()
+        self._report_dir = report_dir
         # Кандидаты для подтверждения, ключ (transport, chat_id).
         self._pending: dict[tuple[str, str], dict[str, Person]] = {}
         for transport in transports.values():
@@ -76,6 +84,15 @@ class BotService:
             )
             self._pending.pop((transport, chat_id), None)
             await tr.send_message(chat_id, formatting.linked_message(person))
+
+    # ---------- сводка по проектам ----------
+
+    async def build_summary(self, now: datetime | None = None) -> Summary:
+        """Собрать управленческую сводку. Требует настроенного portfolio_api."""
+        if self._portfolio is None:
+            raise RuntimeError("Сводка недоступна: не настроен EvaTeamPortfolio")
+        portfolio = await self._portfolio.get_portfolio()
+        return build_summary(portfolio, now=now, options=self._summary_options)
 
     # ---------- операции планировщика ----------
 

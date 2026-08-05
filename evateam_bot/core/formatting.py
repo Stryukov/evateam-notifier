@@ -40,6 +40,20 @@ def _esc(text: str) -> str:
     return html.escape(text or "")
 
 
+def plural(count: int, one: str, few: str, many: str) -> str:
+    """Русское склонение при числительном: 1 эпик, 2 эпика, 5 эпиков."""
+    tens = abs(count) % 100
+    if 11 <= tens <= 14:
+        return many
+    match abs(count) % 10:
+        case 1:
+            return one
+        case 2 | 3 | 4:
+            return few
+        case _:
+            return many
+
+
 def welcome_message() -> OutgoingMessage:
     return OutgoingMessage(
         text=(
