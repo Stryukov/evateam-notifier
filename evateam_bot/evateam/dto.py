@@ -40,6 +40,24 @@ def _rel_field(value: Any, key: str = "name") -> str | None:
     return str(value)
 
 
+def _rel_key(value: Any, key: str) -> str | None:
+    """Строго достать поле `key` из связанного объекта — БЕЗ фолбэка на id.
+
+    В отличие от `_rel_field`, ничего не подставляет: если поля нет, вернёт None.
+    Это принципиально для `status.code` — иначе при отсутствии `code` вернулся бы
+    id вида "CmfStatus:...", фильтр по кодам статусов молча не совпал бы ни с чем,
+    и сводка всегда была бы пустой.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        found = value.get(key)
+        return found if isinstance(found, str) else None
+    if isinstance(value, list) and value:
+        return _rel_key(value[0], key)
+    return None
+
+
 def _rel_id(value: Any) -> str | None:
     if value is None:
         return None
