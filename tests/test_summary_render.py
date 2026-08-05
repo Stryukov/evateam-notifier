@@ -29,13 +29,15 @@ def _epic(id_, *, title="Эпик", start=None, end=None, hard=None, project="p1
     )
 
 
-def _task(id_, *, end=None, hard=None, assignee="Иванов", title="Задача", epic="e1"):
+def _task(id_, *, end=None, hard=None, assignee="Иванов", title="Задача", epic="e1",
+          status="in_progress"):
     return Task(
         id=id_,
         code=id_.upper(),
         title=title,
         status_name="В работе",
         status_category=StatusCategory.IN_PROGRESS,
+        status_code=status,
         plan_end=end,
         deadline=hard,
         assignee=assignee,
@@ -115,6 +117,17 @@ def test_idle_epics_collapsed_into_one_line():
     html = render_html(_summary(epics, {"busy": [_task("t1", end=datetime(2026, 1, 1))]}))
     assert "Ещё 5 эпиков без задач в работе" in html
     assert html.count("Нет задач в работе") == 0
+
+
+def test_no_extra_prefix_when_all_epics_are_idle():
+    """«Ещё» уместно, только если выше что-то показано.
+
+    Реальный случай: проект «Мониторинг качества воды» с единственным эпиком —
+    формулировка «Ещё 1 эпик» вводила в заблуждение.
+    """
+    html = render_html(_summary([_epic("only", title="Единственный")]))
+    assert "1 эпик без задач в работе" in html
+    assert "Ещё 1 эпик" not in html
 
 
 def test_idle_epic_count_is_declined():

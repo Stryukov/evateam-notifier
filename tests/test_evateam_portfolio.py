@@ -88,10 +88,10 @@ def _responder(request: httpx.Request) -> httpx.Response:
         conditions = {(c[0], str(c[2])) for c in filt if isinstance(c, list) and len(c) == 3}
         if ("logic_prefix", "task.epic") in conditions:
             return httpx.Response(200, json={"result": [EPIC]})
-        if ("cache_status_type", "IN_PROGRESS") in conditions:
-            return httpx.Response(200, json={"result": [TASK_IN_PROGRESS, ORPHAN, EPIC]})
-        if ("cache_status_type", "IN_REVIEW") in conditions:
-            return httpx.Response(200, json={"result": [TASK_IN_REVIEW]})
+        # Незакрытые задачи — один запрос; эпик тоже приходит и должен быть отсеян.
+        return httpx.Response(
+            200, json={"result": [TASK_IN_PROGRESS, TASK_IN_REVIEW, ORPHAN, EPIC]}
+        )
     return httpx.Response(200, json={"result": []})
 
 
@@ -117,20 +117,26 @@ async def test_epics_and_tasks_are_grouped():
 
 
 @respx.mock
-async def test_active_tasks_use_exactly_two_calls_and_drop_epics():
+async def test_tasks_fetched_in_one_call_and_epics_dropped():
+    """Отбор по статусам — на стороне core, здесь тянем всё незакрытое одним запросом.
+
+    Фильтровать задачи по cache_status_type нельзя: у кода `pause` тип OPEN,
+    и приостановленные задачи молча терялись (реальный случай MW-1).
+    """
     route = respx.post(URL).mock(side_effect=_responder)
     portfolio = await _fetch()
 
-    status_filters = [
-        cond[2]
+    task_calls = [
+        body
         for body in _bodies(route)
         if body.get("method") == "CmfTask.list"
-        for cond in body.get("kwargs", {}).get("filter", [])
-        if cond[0] == "cache_status_type" and cond[1] == "=="
+        and not any(c[0] == "logic_prefix" for c in body["kwargs"]["filter"])
     ]
-    assert status_filters == ["IN_PROGRESS", "IN_REVIEW"]
+    assert len(task_calls) == 1
+    conditions = task_calls[0]["kwargs"]["filter"]
+    assert conditions == [["cache_status_type", "!=", "CLOSED"]]
 
-    # Эпик пришёл в выдаче задач (он тоже IN_PROGRESS), но задачей не считается.
+    # Эпик пришёл в выдаче задач, но задачей не считается.
     all_task_ids = {t.id for tasks in portfolio.tasks_by_epic.values() for t in tasks}
     assert "CmfTask:e1" not in all_task_ids
     assert "CmfTask:e1" not in {t.id for t in portfolio.orphan_tasks}

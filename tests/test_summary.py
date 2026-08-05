@@ -39,13 +39,15 @@ def _epic(id_, *, code=None, title="Эпик", status="in_progress", project="p1
 
 
 def _task(id_, *, end=None, hard=None, assignee="Иванов",
-          category=StatusCategory.IN_PROGRESS, epic="e1", priority=None, title="Задача"):
+          category=StatusCategory.IN_PROGRESS, epic="e1", priority=None, title="Задача",
+          status="in_progress"):
     return Task(
         id=id_,
         code=id_,
         title=title,
         status_name="В работе",
         status_category=category,
+        status_code=status,
         plan_end=end,
         deadline=hard,
         assignee=assignee,
@@ -187,9 +189,11 @@ def test_epic_dates_derived_from_tasks_when_missing():
     portfolio = _portfolio(
         [_epic("e1")],
         {"e1": [
-            Task(id="t1", code="t1", title="a", status_name="", status_category=StatusCategory.IN_PROGRESS,
+            Task(id="t1", code="t1", title="a", status_name="", status_code="in_progress",
+                 status_category=StatusCategory.IN_PROGRESS,
                  plan_start=datetime(2026, 9, 1), plan_end=datetime(2026, 9, 10), epic_id="e1"),
-            Task(id="t2", code="t2", title="b", status_name="", status_category=StatusCategory.IN_PROGRESS,
+            Task(id="t2", code="t2", title="b", status_name="", status_code="in_progress",
+                 status_category=StatusCategory.IN_PROGRESS,
                  plan_start=datetime(2026, 8, 20), plan_end=datetime(2026, 10, 5), epic_id="e1"),
         ]},
     )
@@ -223,6 +227,44 @@ def test_own_epic_dates_win_over_tasks():
     epic = build_summary(portfolio, now=NOW).all_epics[0]
     assert epic.end_date == datetime(2026, 8, 31)
     assert epic.dates_are_derived is False
+
+
+def test_paused_task_is_included():
+    """Реальный случай MW-1: у кода `pause` тип OPEN, по типу задача терялась."""
+    portfolio = _portfolio(
+        [_epic("e1", status="pause")],
+        {"e1": [_task("MW-1", status="pause", title="Проработка")]},
+    )
+    epic = build_summary(portfolio, now=NOW).all_epics[0]
+    assert [t.id for t in epic.tasks] == ["MW-1"]
+    assert epic.is_idle is False
+
+
+def test_task_status_filter_is_independent_from_epics():
+    """Расширяя фильтр эпиков до `open`, не тянем в отчёт весь бэклог задач."""
+    portfolio = _portfolio(
+        [_epic("e1", status="open")],
+        {"e1": [_task("todo", status="open"), _task("work", status="in_progress")]},
+    )
+    summary = build_summary(
+        portfolio,
+        now=NOW,
+        options=SummaryOptions(status_codes=("open",), task_status_codes=("in_progress",)),
+    )
+    assert [t.id for t in summary.all_epics[0].tasks] == ["work"]
+
+
+def test_task_without_status_code_is_dropped():
+    portfolio = _portfolio([_epic("e1")], {"e1": [_task("t1", status=None)]})
+    assert build_summary(portfolio, now=NOW).all_epics[0].tasks == []
+
+
+def test_empty_task_status_codes_takes_everything():
+    portfolio = _portfolio([_epic("e1")], {"e1": [_task("t1", status="whatever")]})
+    summary = build_summary(
+        portfolio, now=NOW, options=SummaryOptions(task_status_codes=())
+    )
+    assert len(summary.all_epics[0].tasks) == 1
 
 
 def test_idle_epic_is_flagged():

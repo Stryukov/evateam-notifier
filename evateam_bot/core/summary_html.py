@@ -283,9 +283,9 @@ def _project_card(project: ProjectSummary) -> str:
     if idle:
         codes = ", ".join(_epic_link(item) for item in idle)
         word = plural(len(idle), "эпик", "эпика", "эпиков")
-        body += (
-            f'<p class="note">⚪ Ещё {len(idle)} {word} без задач в работе: {codes}</p>'
-        )
+        # «Ещё» уместно, только если выше действительно что-то показано.
+        prefix = f"Ещё {len(idle)}" if active else str(len(idle))
+        body += f'<p class="note">⚪ {prefix} {word} без задач в работе: {codes}</p>'
     return (
         f'<details class="card"{open_attr}>'
         f"<summary>{HEALTH_EMOJI[project.health]} {_esc(project.name)}"

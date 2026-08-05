@@ -23,13 +23,15 @@ def _epic(id_, *, title="Эпик", end=None, hard=None, project="Проект",
     )
 
 
-def _task(id_, *, end=None, hard=None, assignee="Иванов", title="Задача"):
+def _task(id_, *, end=None, hard=None, assignee="Иванов", title="Задача",
+          status="in_progress"):
     return Task(
         id=id_,
         code=id_.upper(),
         title=title,
         status_name="В работе",
         status_category=StatusCategory.IN_PROGRESS,
+        status_code=status,
         plan_end=end,
         deadline=hard,
         assignee=assignee,

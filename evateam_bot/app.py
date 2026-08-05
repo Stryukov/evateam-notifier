@@ -55,6 +55,7 @@ class App:
             portfolio_api=portfolio_api,
             summary_options=SummaryOptions(
                 status_codes=settings.parsed_epic_status_codes(),
+                task_status_codes=settings.parsed_task_status_codes(),
                 risk_days=settings.summary_risk_days,
             ),
             report_dir=settings.summary_output_dir,

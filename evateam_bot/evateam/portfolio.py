@@ -21,7 +21,6 @@ from ..core.models import Portfolio, Task
 from .client import EvaTeamClient, EvaTeamError
 from .dto import parse_epic, parse_task
 from .tasks import (
-    ACTIVE_STATUS_TYPES,
     CLOSED_STATUS_TYPE,
     EPIC_FIELDS,
     EPIC_LOGIC_PREFIX,
@@ -49,7 +48,7 @@ class EvaTeamPortfolio:
 
     async def get_portfolio(self) -> Portfolio:
         epics_raw = await self._fetch_epics()
-        tasks_raw = await self._fetch_active_tasks()
+        tasks_raw = await self._fetch_open_tasks()
         projects = await self._fetch_projects()
 
         # Ссылки строим одним проходом: и эпики, и задачи — это CmfTask.
@@ -107,27 +106,23 @@ class EvaTeamPortfolio:
             )
         return [item for item in _extract_items(result) if _is_epic(item)]
 
-    async def _fetch_active_tasks(self) -> list[dict[str, Any]]:
-        """Задачи в работе и ждущие подтверждения закрытия.
+    async def _fetch_open_tasks(self) -> list[dict[str, Any]]:
+        """Все незакрытые задачи (1 запрос).
 
-        Два запроса со слиянием по id — тот же приём, что в `get_tasks_for_person`:
-        «IN_PROGRESS ИЛИ IN_REVIEW» одним фильтром не выразить.
+        Отбор по конкретным статусам делает `core/summary.py` — по `status.code`,
+        а не по `cache_status_type`: у кода `pause` тип OPEN, и фильтр по типу
+        молча терял задачи на паузе (реальный случай MW-1).
         """
-        by_id: dict[str, dict[str, Any]] = {}
-        for status_type in ACTIVE_STATUS_TYPES:
-            result = await self._client.call(
-                METHOD_TASK_LIST,
-                kwargs={
-                    "filter": [["cache_status_type", "==", status_type]],
-                    "fields": EPIC_TASK_FIELDS,
-                    "order_by": ["deadline"],
-                },
-            )
-            for item in _extract_items(result):
-                if item.get("id"):
-                    by_id[item["id"]] = item
-        # Сам эпик может быть в работе — но он не задача внутри себя.
-        return [item for item in by_id.values() if not _is_epic(item)]
+        result = await self._client.call(
+            METHOD_TASK_LIST,
+            kwargs={
+                "filter": [["cache_status_type", "!=", CLOSED_STATUS_TYPE]],
+                "fields": EPIC_TASK_FIELDS,
+                "order_by": ["deadline"],
+            },
+        )
+        # Сам эпик может быть не закрыт — но он не задача внутри себя.
+        return [item for item in _extract_items(result) if not _is_epic(item)]
 
     async def _fetch_projects(self) -> dict[str, str]:
         """project_id -> название. Мягко: без проектов отчёт всё равно собирается."""

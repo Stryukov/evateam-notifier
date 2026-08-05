@@ -29,8 +29,11 @@ from .models import (
     Task,
 )
 
-#: Коды статусов эпиков по умолчанию (CmfStatus.code).
+#: Коды статусов (CmfStatus.code), которые считаем «идёт работа».
+#: Отбирать по ним, а не по cache_status_type: у `pause` тип OPEN, и по типу
+#: приостановленное неотличимо от «TO DO».
 DEFAULT_EPIC_STATUS_CODES: tuple[str, ...] = ("in_progress", "in_review", "pause")
+DEFAULT_TASK_STATUS_CODES: tuple[str, ...] = ("in_progress", "in_review", "pause")
 
 NO_PROJECT_NAME = "(без проекта)"
 
@@ -38,6 +41,9 @@ NO_PROJECT_NAME = "(без проекта)"
 @dataclass(frozen=True)
 class SummaryOptions:
     status_codes: tuple[str, ...] = DEFAULT_EPIC_STATUS_CODES
+    # Отдельный список для задач: расширяя фильтр эпиков (например, добавив `open`,
+    # чтобы увидеть всю картину), не хочется затягивать в отчёт весь бэклог задач.
+    task_status_codes: tuple[str, ...] = DEFAULT_TASK_STATUS_CODES
     risk_days: int = 7
     include_orphan_tasks: bool = False
 
@@ -97,7 +103,12 @@ def build_summary(
         selected.append(epic)
 
     epic_summaries = [
-        _build_epic_summary(epic, portfolio.tasks_by_epic.get(epic.id, []), now, options)
+        _build_epic_summary(
+            epic,
+            _select_tasks(portfolio.tasks_by_epic.get(epic.id, []), options),
+            now,
+            options,
+        )
         for epic in selected
     ]
     projects = _group_by_project(epic_summaries, portfolio.project_names)
@@ -110,8 +121,23 @@ def build_summary(
         risk_days=options.risk_days,
         epics_total_scanned=len(portfolio.epics),
         epics_unknown_status=unknown_status,
-        orphan_tasks=list(portfolio.orphan_tasks) if options.include_orphan_tasks else [],
+        orphan_tasks=(
+            _select_tasks(portfolio.orphan_tasks, options)
+            if options.include_orphan_tasks
+            else []
+        ),
     )
+
+
+def _select_tasks(tasks: list[Task], options: SummaryOptions) -> list[Task]:
+    """Задачи с подходящим кодом статуса. Пустой список кодов — берём все."""
+    if not options.task_status_codes:
+        return list(tasks)
+    return [
+        task
+        for task in tasks
+        if task.status_code and task.status_code.lower() in options.task_status_codes
+    ]
 
 
 def _build_epic_summary(

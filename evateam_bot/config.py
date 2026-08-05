@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # Строкой, а не list[str]: pydantic-settings разбирает сложные типы из окружения
     # как JSON, и "in_progress,in_review" упал бы с JSONDecodeError.
     summary_epic_status_codes: str = Field(default="in_progress,in_review,pause")
+    # Коды статусов задач внутри эпика. Отдельно от эпиков: расширяя фильтр эпиков
+    # (напр. добавив `open`), не хочется тянуть в отчёт весь бэклог задач.
+    summary_task_status_codes: str = Field(default="in_progress,in_review,pause")
     # Горизонт «под угрозой»: плановый конец в пределах N дней -> 🟡.
     summary_risk_days: int = Field(default=7)
     # Куда складывать сгенерированные HTML/CSV/JSON.
@@ -72,6 +75,9 @@ class Settings(BaseSettings):
 
     def parsed_epic_status_codes(self) -> tuple[str, ...]:
         return _parse_csv_list(self.summary_epic_status_codes)
+
+    def parsed_task_status_codes(self) -> tuple[str, ...]:
+        return _parse_csv_list(self.summary_task_status_codes)
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
