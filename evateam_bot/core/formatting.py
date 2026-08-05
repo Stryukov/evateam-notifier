@@ -96,6 +96,17 @@ def linked_message(person: Person) -> OutgoingMessage:
     )
 
 
+def unknown_command_message(command: str) -> OutgoingMessage:
+    return OutgoingMessage(
+        text=(
+            f"Не знаю команду /{_esc(command)}.\n\n"
+            "Доступно:\n"
+            "/summary — сводка по проектам и эпикам\n"
+            "/start — привязать учётную запись EvaTeam"
+        )
+    )
+
+
 def rejected_message() -> OutgoingMessage:
     return OutgoingMessage(
         text="Хорошо. Отправьте другой email или логин, чтобы найти нужную учётную запись."
