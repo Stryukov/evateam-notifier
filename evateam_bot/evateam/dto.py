@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from ..core.models import Person, StatusCategory, Task
+from ..core.models import Epic, Person, StatusCategory, Task
 
 # Маппинг типа статуса EvaTeam (поле `cache_status_type`) -> обобщённая категория.
 # Значения EvaTeam: OPEN, IN_PROGRESS, IN_REVIEW, CLOSED.
@@ -136,6 +136,52 @@ def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
         priority=priority,
         priority_name=_rel_field(priority_raw),
         project_name=_rel_field(raw.get("project")),
+        url=url,
+        is_active=is_active,
+        status_code=_rel_key(raw.get("status"), "code"),
+        plan_start=parse_datetime(raw.get("plan_start_date")),
+        plan_end=parse_datetime(raw.get("plan_end_date")),
+        assignee=_assignee(raw),
+        epic_id=_rel_id(raw.get("epic")) or raw.get("epic_id"),
+        project_id=_rel_id(raw.get("parent")) or raw.get("parent_id") or raw.get("project_id"),
+    )
+
+
+def _assignee(raw: dict[str, Any]) -> str | None:
+    """Исполнитель: сначала `responsible`, затем первый из `executors`.
+
+    На живом инстансе `executors` не заполняют — исполнитель живёт в `responsible`,
+    но фолбэк оставляем, чтобы не потерять данные там, где практика другая.
+
+    Строгий `_rel_key`: лучше «— без исполнителя», чем «CmfPerson:2b3...» в отчёте.
+    """
+    return _rel_key(raw.get("responsible"), "name") or _rel_key(raw.get("executors"), "name")
+
+
+def parse_epic(raw: dict[str, Any], *, url: str | None = None) -> Epic:
+    """Эпик — это CmfTask с logic_prefix=task.epic (отдельной модели в EvaTeam нет)."""
+    status_type = raw.get("cache_status_type")
+    activity = raw.get("activity")
+    is_active = True
+    if isinstance(activity, str):
+        is_active = activity.strip().lower() not in {"archive", "archived", "inactive"}
+    elif isinstance(activity, bool):
+        is_active = activity
+
+    return Epic(
+        id=str(raw.get("id") or ""),
+        code=raw.get("code"),
+        title=(raw.get("name") or "").strip() or "(без названия)",
+        status_code=_rel_key(raw.get("status"), "code"),
+        status_name=_rel_key(raw.get("status"), "name") or (status_type or ""),
+        status_category=status_category_from_type(status_type),
+        # У эпика родитель — CmfProject; `project` оставляем как запасной источник.
+        project_id=_rel_id(raw.get("parent")) or raw.get("parent_id") or raw.get("project_id"),
+        project_name=_rel_key(raw.get("parent"), "name") or _rel_key(raw.get("project"), "name"),
+        responsible=_rel_key(raw.get("responsible"), "name"),
+        plan_start=parse_datetime(raw.get("plan_start_date")),
+        plan_end=parse_datetime(raw.get("plan_end_date")),
+        deadline=parse_datetime(raw.get("deadline")),
         url=url,
         is_active=is_active,
     )
