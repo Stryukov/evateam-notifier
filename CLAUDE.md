@@ -9,6 +9,9 @@
 2. Утренний дайджест: задачи «в работе» и «ожидают».
 3. Напоминание о просрочке дедлайна.
 
+Плюс управленческий контур: **сводка по проектам** (`/summary`) — активные эпики с задачами,
+светофор по плановым датам, дорожная карта. Отдаётся сообщением + HTML/CSV файлами.
+
 ## Ключевые архитектурные решения
 
 - **Транспортный фасад.** Мессенджер отделён от логики. Сейчас Telegram (`transports/telegram`),
@@ -18,10 +21,13 @@
 - **Один сервисный токен.** Бот ходит в EvaTeam под одним сервис-аккаунтом и читает задачи всех
   сотрудников. Привязка «кто есть кто» — в SQLite.
 - **Слои:**
-  - `core/` — чистая логика и модели, без сети и БД. Легко тестируется.
-  - `evateam/` — всё про API EvaTeam (JSON-RPC).
+  - `core/` — чистая логика и модели, без сети, БД и файлов. Легко тестируется.
+    Рендеры (`summary_html`, `summary_csv`) возвращают строки, а не пишут файлы.
+  - `evateam/` — всё про API EvaTeam (JSON-RPC). `tasks.py` — задачи сотрудника,
+    `portfolio.py` — срез по проектам/эпикам.
   - `storage/` — БД.
   - `transports/` — мессенджеры.
+  - `reports.py` — единственное место с файловым I/O (запись HTML/CSV/JSON).
   - `service.py` — оркестратор (application layer), склеивает всё вместе.
 
 ## EvaTeam API — протокол (подтверждён на живом инстансе)
@@ -46,6 +52,17 @@
   Без него — только свои/публичные. Управляется `EVATEAM_ADMIN_MODE`.
 - **Статус задачи:** поле `cache_status_type` ∈ {`OPEN`,`IN_PROGRESS`,`IN_REVIEW`,`CLOSED`}.
   Маппинг в `evateam/dto.py`: IN_PROGRESS→в работе, IN_REVIEW→ожидают, OPEN→предстоит, CLOSED→done.
+  **`cache_status_type` — грубая категория.** Точный статус — `status.code` (`CmfStatus.list`,
+  ~186 записей). Например, `pause` («Пауза», «Приостановлен») имеет тип `OPEN`, и по типу его
+  не отличить от «TO DO». Фильтр эпиков в сводке идёт именно по `status.code`.
+- **Эпик — это `CmfTask` с `logic_prefix == "task.epic"`.** Отдельной модели `CmfEpic` нет.
+  Задача ссылается на эпик через `epic_id`; и у эпика, и у задачи `parent_id` — это `CmfProject`.
+  Определять эпик по префиксу «Epic» в названии нельзя: часть эпиков названа без него.
+- **Плановые даты:** у `CmfTask` (значит и у эпика) и у `CmfProject` есть `plan_start_date` /
+  `plan_end_date` — на них строится дорожная карта; `deadline` используется как запасной.
+- **`_rel_field` vs `_rel_key` (`evateam/dto.py`):** `_rel_field` при отсутствии запрошенного
+  поля возвращает `id`. Для `status.code` это молча ломает фильтр (`"CmfStatus:..."` не совпадёт
+  ни с чем) — поэтому для кодов и названий используется строгий `_rel_key` без фолбэка.
 - **Идентификация людей:** у реальных сотрудников `login` = email (напр. `user@example.ru`);
   у демо-пользователей `login=null`, но `email` заполнен. `find_person` ищет по login→email→name.
 
@@ -55,9 +72,14 @@
 ## Запуск и проверка
 
 - Прод: `python -m evateam_bot.main`
-- Задания вручную: `python -m evateam_bot.scheduler.jobs --run digest|deadlines`
-- Smoke API: `python -m evateam_bot.evateam.smoke --person <email>`
+- Задания вручную: `python -m evateam_bot.scheduler.jobs --run digest|deadlines|summary`
+  (у `summary` есть `--no-send` — собрать файлы без отправки, и `--chat <id>`)
+- Smoke API: `python -m evateam_bot.evateam.smoke --person <email>` / `--epics`
 - Тесты: `pytest`
+
+**Осторожно с порядком роутов aiogram** (`transports/telegram/adapter.py`): хендлеры
+проверяются в порядке регистрации, роут команд обязан стоять между `CommandStart()` и
+`F.text` — иначе `/summary` уедет в `on_text` и будет истолкован как поиск сотрудника.
 
 ## Конвенции
 
