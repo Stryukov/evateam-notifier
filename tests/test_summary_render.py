@@ -164,6 +164,24 @@ def test_open_ended_bar_is_drawn_and_marked():
     assert "→ ?" in html
 
 
+def test_timeline_row_shows_project_name():
+    """Список сквозной по портфелю, поэтому проект подписан у каждой строки."""
+    html = render_html(_summary([
+        _epic("e1", start=datetime(2026, 8, 1), end=datetime(2026, 9, 1),
+              project_name="Биллинг (задачи)")
+    ]))
+    assert "<i>Биллинг (задачи)</i>" in html
+
+
+def test_timeline_label_width_defined_once():
+    """Ширина подписи используется шкалой и маркером «сегодня» — держим в переменной."""
+    html = render_html(_summary([
+        _epic("e1", start=datetime(2026, 8, 1), end=datetime(2026, 9, 1))
+    ]))
+    assert "--tl-label" in html
+    assert "210px" not in html  # прежняя жёстко зашитая ширина
+
+
 def test_hard_deadline_shown_as_marker_on_timeline():
     html = render_html(_summary([
         _epic("e1", start=datetime(2026, 8, 1), end=datetime(2026, 9, 1),

@@ -361,6 +361,42 @@ def test_attention_and_timeline_share_the_sort_order():
     assert [e.epic.id for e in timeline_epics(summary)] == ["high", "low"]
 
 
+def test_timeline_is_flat_across_projects():
+    """Реальный случай SPT-25: приоритетный эпик тонул под обычными из «верхнего» проекта.
+
+    Дорожка не группируется по проектам — иначе приоритет работает только внутри
+    своего проекта.
+    """
+    portfolio = _portfolio(
+        [
+            # «Красный» проект: обычный приоритет.
+            _epic("p1_normal", project="p1", project_name="Первый",
+                  hard=datetime(2026, 1, 1), start=datetime(2026, 3, 1),
+                  end=datetime(2026, 4, 1)),
+            # «Зелёный» проект: высокий приоритет, но проект стоит ниже.
+            _epic("p2_high", project="p2", project_name="Второй", priority=1,
+                  start=datetime(2026, 3, 1), end=datetime(2027, 4, 1)),
+        ],
+        projects={"p1": "Первый", "p2": "Второй"},
+    )
+    summary = build_summary(portfolio, now=NOW)
+    # Светофор главнее: просроченный сверху...
+    assert [e.epic.id for e in timeline_epics(summary)] == ["p1_normal", "p2_high"]
+    # ...но группировки по проектам нет — оба в одном сквозном списке.
+    assert len(summary.projects) == 2
+
+
+def test_timeline_order_is_health_then_priority_then_start():
+    portfolio = _portfolio([
+        _epic("ok_late_start", end=datetime(2027, 1, 1), start=datetime(2026, 9, 1)),
+        _epic("ok_early_start", end=datetime(2027, 1, 1), start=datetime(2026, 8, 20)),
+        _epic("ok_high", end=datetime(2027, 1, 1), start=datetime(2026, 12, 1), priority=1),
+        _epic("late", hard=datetime(2026, 1, 1), start=datetime(2027, 1, 1)),
+    ])
+    order = [e.epic.id for e in timeline_epics(build_summary(portfolio, now=NOW))]
+    assert order == ["late", "ok_high", "ok_early_start", "ok_late_start"]
+
+
 def test_tasks_sorted_late_first():
     portfolio = _portfolio(
         [_epic("e1")],

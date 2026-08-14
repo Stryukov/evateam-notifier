@@ -58,12 +58,19 @@ display:flex;gap:10px;align-items:baseline;background:#fafafa}
 border-radius:20px;padding:1px 9px}
 .badge.late{color:var(--late);border-color:var(--late)}
 .badge.risk{color:var(--risk);border-color:var(--risk)}
+/* Ширина подписи задана один раз: её же используют шкала и маркер «сегодня». */
+:root{--tl-label:250px}
 .tl{border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto}
-.tl-scale{position:relative;height:18px;margin-left:210px;border-bottom:1px solid var(--line)}
+.tl-scale{position:relative;height:18px;margin-left:calc(var(--tl-label) + 10px);
+border-bottom:1px solid var(--line)}
 .tl-tick{position:absolute;top:0;font-size:11px;color:var(--muted);
 border-left:1px solid var(--line);padding-left:4px;height:18px;white-space:nowrap}
-.tl-row{display:flex;align-items:center;margin-top:7px;min-width:640px}
-.tl-label{width:200px;flex:0 0 200px;padding-right:10px;font-size:13px;
+.tl-row{display:flex;align-items:center;margin-top:7px;min-width:700px}
+.tl-label{width:var(--tl-label);flex:0 0 var(--tl-label);padding-right:10px;font-size:13px;
+overflow:hidden}
+.tl-label b{display:block;font-weight:400;white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
+.tl-label i{display:block;font-style:normal;font-size:11px;color:var(--muted);
 white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tl-track{position:relative;flex:1;height:22px;background:#f6f7f9;border-radius:5px}
 .tl-bar{position:absolute;top:3px;height:16px;min-width:3px;border-radius:4px;
@@ -210,10 +217,11 @@ def _timeline_block(summary: Summary) -> str:
         f'<div class="tl-scale">{ticks}</div>',
     ]
     if rows:
+        offset = "calc(var(--tl-label) + 10px)"
         body.append(
             f'<div style="position:relative">'
-            f'<div class="tl-today" style="left:calc(210px + (100% - 210px) * {today / 100:.4f})"'
-            f' title="сегодня"></div>{rows}</div>'
+            f'<div class="tl-today" style="left:calc({offset} + '
+            f'(100% - {offset}) * {today / 100:.4f})" title="сегодня"></div>{rows}</div>'
         )
     else:
         body.append(
@@ -252,6 +260,8 @@ def _timeline_row(item: EpicSummary, start: date, end: date) -> str:
     label = f"{item.epic.code} · {item.epic.title}" if item.epic.code else item.epic.title
     badge = priority_badge(item.epic.priority)
     label = f"{badge} {label}" if badge else label
+    # Список сквозной по портфелю, поэтому проект подписываем у каждой строки.
+    project = item.epic.project_name or ""
 
     # Крайний срок — отдельная засечка, он живёт по своей шкале.
     hard = ""
@@ -262,7 +272,8 @@ def _timeline_row(item: EpicSummary, start: date, end: date) -> str:
             f'title="крайний срок {item.hard_end.strftime("%d.%m.%Y")}"></div>'
         )
     return (
-        f'<div class="tl-row"><div class="tl-label" title="{_esc(label)}">{_esc(label)}</div>'
+        f'<div class="tl-row"><div class="tl-label" title="{_esc(label)}">'
+        f"<b>{_esc(label)}</b><i>{_esc(project)}</i></div>"
         f'<div class="tl-track"><div class="tl-bar {classes}" title="{_esc(title)}" '
         f'style="left:{left:.2f}%;width:{width:.2f}%">{span}</div>{hard}</div></div>'
     )

@@ -240,6 +240,25 @@ def epic_sort_key(item: EpicSummary) -> tuple:
     )
 
 
+def roadmap_sort_key(item: EpicSummary) -> tuple:
+    """Светофор → приоритет → порядок выполнения → дата начала.
+
+    Для сквозных списков (дорожная карта, «Требуют решения»), где строки идут не
+    по проектам, а по всему портфелю: проблемное сверху, внутри — управленческий
+    приоритет, дальше ручной порядок, и уже потом хронология.
+
+    Отличается от `epic_sort_key` первым ключом: внутри карточки проекта светофор
+    вторичен (проект уже отобран по нему), а в сквозном списке — главный.
+    """
+    return (
+        -HEALTH_SEVERITY[item.health],
+        -(item.epic.priority or 0),
+        item.epic.exec_order if item.epic.exec_order is not None else _LAST_ORDER,
+        item.start_date or _FAR_FUTURE,
+        item.epic.title,
+    )
+
+
 @dataclass(frozen=True)
 class ProjectSummary:
     """Проект с эпиками, отсортированными по убыванию проблемности."""
@@ -310,7 +329,7 @@ class Summary:
         """
         return sorted(
             (e for e in self.all_epics if e.health in (Health.LATE, Health.RISK)),
-            key=epic_sort_key,
+            key=roadmap_sort_key,
         )
 
     @property

@@ -28,6 +28,7 @@ from .models import (
     SummaryKpi,
     Task,
     epic_sort_key,
+    roadmap_sort_key,
 )
 
 #: Коды статусов (CmfStatus.code), которые считаем «идёт работа».
@@ -304,11 +305,12 @@ def _project_sort_key(item: ProjectSummary) -> tuple:
 def timeline_epics(summary: Summary) -> list[EpicSummary]:
     """Эпики, которые можно разместить на карте: нужна хотя бы плановая дата начала.
 
-    Порядок — тот же, что в карточках: проекты по светофору, эпики по приоритету
-    (`all_epics` уже отдаёт их отсортированными).
+    Список сквозной по портфелю, а не сгруппированный по проектам: иначе
+    приоритетный эпик из «нижнего» проекта тонет под обычными эпиками «верхнего»
+    (так и случилось с SPT-25). Порядок — `roadmap_sort_key`; проект виден в подписи строки.
     Полоса без планового окончания рисуется открытой — см. `open_ended`.
     """
-    return [e for e in summary.all_epics if e.start_date]
+    return sorted((e for e in summary.all_epics if e.start_date), key=roadmap_sort_key)
 
 
 def timeline_bounds(summary: Summary) -> tuple[date, date]:
