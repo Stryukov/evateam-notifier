@@ -10,7 +10,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Protocol, runtime_checkable
 
-from ..core.messages import OutgoingMessage
+from ..core.messages import OutgoingDocument, OutgoingMessage
 
 # Имя транспорта используется как ключ в БД (users.transport).
 TransportName = str
@@ -30,12 +30,23 @@ class UpdateHandler(Protocol):
         self, transport: TransportName, chat_id: str, action: str
     ) -> None: ...
 
+    async def on_command(
+        self, transport: TransportName, chat_id: str, command: str, args: str
+    ) -> None:
+        """Команда вида `/summary`. `command` — нормализован: без слэша, в нижнем
+        регистре, без `@botname`."""
+        ...
+
 
 class BotTransport(ABC):
     """Базовый транспорт. Наследники: TelegramTransport, (в будущем) MaxTransport."""
 
     #: уникальное имя транспорта, напр. "telegram"
     name: TransportName
+
+    #: умеет ли транспорт отправлять файлы. Сервис проверяет флаг ДО отправки и
+    #: деградирует в «текст + путь к файлу», а не ловит исключение.
+    supports_documents: bool = False
 
     def __init__(self) -> None:
         self._handler: UpdateHandler | None = None
@@ -54,6 +65,10 @@ class BotTransport(ABC):
     @abstractmethod
     async def send_message(self, chat_id: str, message: OutgoingMessage) -> None:
         """Отправить сообщение в чат."""
+
+    async def send_document(self, chat_id: str, document: OutgoingDocument) -> None:
+        """Отправить файл. Не абстрактный: новый транспорт не обязан это уметь сразу."""
+        raise NotImplementedError(f"Transport {self.name!r} не умеет отправлять файлы")
 
     @abstractmethod
     async def start(self) -> None:

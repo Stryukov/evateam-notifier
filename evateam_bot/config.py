@@ -50,9 +50,24 @@ class Settings(BaseSettings):
     timezone: str = Field(default="Europe/Moscow")
     digest_time: str = Field(default="09:00")
     deadline_check_time: str = Field(default="09:30")
+    # Вечернее напоминание: закрыть выполненное, подвинуть сроки.
+    evening_check_time: str = Field(default="16:00")
 
     # Хранилище
     db_path: str = Field(default="data/bot.db")
+
+    # Сводка по проектам (/summary).
+    # Коды статусов эпиков (CmfStatus.code), которые попадают в отчёт.
+    # Строкой, а не list[str]: pydantic-settings разбирает сложные типы из окружения
+    # как JSON, и "in_progress,in_review" упал бы с JSONDecodeError.
+    summary_epic_status_codes: str = Field(default="in_progress,in_review,pause")
+    # Коды статусов задач внутри эпика. Отдельно от эпиков: расширяя фильтр эпиков
+    # (напр. добавив `open`), не хочется тянуть в отчёт весь бэклог задач.
+    summary_task_status_codes: str = Field(default="in_progress,in_review,pause")
+    # Горизонт «под угрозой»: плановый конец в пределах N дней -> 🟡.
+    summary_risk_days: int = Field(default=7)
+    # Куда складывать сгенерированные HTML/CSV/JSON.
+    summary_output_dir: str = Field(default="data/reports")
 
     def parsed_digest_time(self) -> tuple[int, int]:
         return _parse_hhmm(self.digest_time)
@@ -60,10 +75,24 @@ class Settings(BaseSettings):
     def parsed_deadline_time(self) -> tuple[int, int]:
         return _parse_hhmm(self.deadline_check_time)
 
+    def parsed_evening_time(self) -> tuple[int, int]:
+        return _parse_hhmm(self.evening_check_time)
+
+    def parsed_epic_status_codes(self) -> tuple[str, ...]:
+        return _parse_csv_list(self.summary_epic_status_codes)
+
+    def parsed_task_status_codes(self) -> tuple[str, ...]:
+        return _parse_csv_list(self.summary_task_status_codes)
+
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
     hour_str, _, minute_str = value.partition(":")
     return int(hour_str), int(minute_str or 0)
+
+
+def _parse_csv_list(value: str) -> tuple[str, ...]:
+    """"a, B ,c" -> ("a", "b", "c")."""
+    return tuple(part.strip().lower() for part in value.split(",") if part.strip())
 
 
 @lru_cache

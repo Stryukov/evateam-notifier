@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from ..core.models import Person, StatusCategory, Task
+from ..core.models import Epic, Person, StatusCategory, Task
 
 # Маппинг типа статуса EvaTeam (поле `cache_status_type`) -> обобщённая категория.
 # Значения EvaTeam: OPEN, IN_PROGRESS, IN_REVIEW, CLOSED.
@@ -38,6 +38,24 @@ def _rel_field(value: Any, key: str = "name") -> str | None:
     if isinstance(value, list) and value:
         return _rel_field(value[0], key)
     return str(value)
+
+
+def _rel_key(value: Any, key: str) -> str | None:
+    """Строго достать поле `key` из связанного объекта — БЕЗ фолбэка на id.
+
+    В отличие от `_rel_field`, ничего не подставляет: если поля нет, вернёт None.
+    Это принципиально для `status.code` — иначе при отсутствии `code` вернулся бы
+    id вида "CmfStatus:...", фильтр по кодам статусов молча не совпал бы ни с чем,
+    и сводка всегда была бы пустой.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        found = value.get(key)
+        return found if isinstance(found, str) else None
+    if isinstance(value, list) and value:
+        return _rel_key(value[0], key)
+    return None
 
 
 def _rel_id(value: Any) -> str | None:
@@ -108,6 +126,8 @@ def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
         maybe = priority_raw.get("orderno") or priority_raw.get("weight")
         priority = int(maybe) if isinstance(maybe, (int, float)) else None
 
+    plan_start, plan_end = plan_dates(raw)
+
     return Task(
         id=task_id,
         code=code,
@@ -118,6 +138,91 @@ def parse_task(raw: dict[str, Any], *, url: str | None = None) -> Task:
         priority=priority,
         priority_name=_rel_field(priority_raw),
         project_name=_rel_field(raw.get("project")),
+        url=url,
+        is_active=is_active,
+        status_code=_rel_key(raw.get("status"), "code"),
+        plan_start=plan_start,
+        plan_end=plan_end,
+        assignee=_assignee(raw),
+        epic_id=_rel_id(raw.get("epic")) or raw.get("epic_id"),
+        project_id=_rel_id(raw.get("parent")) or raw.get("parent_id") or raw.get("project_id"),
+    )
+
+
+def plan_dates(raw: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+    """Плановые («мягкие») даты начала и окончания — ровно то, что показывает интерфейс.
+
+    Единственный источник — связанный CmfGanttTask (`op_gantt_task`).
+
+    Фолбэка на `CmfTask.plan_start_date` / `plan_end_date` здесь намеренно НЕТ:
+    это другая пара полей, интерфейс её не отображает и не обновляет, но в ней
+    остаются устаревшие значения. Пример: у SPT-16 в карточке «Плановая дата
+    окончания: Нет», а в `plan_end_date` лежит 2026-06-05 от прошлых правок —
+    фолбэк вытаскивал этот мусор в отчёт.
+
+    Строгий `_rel_key` обязателен: `_rel_field` вернул бы id гант-объекта,
+    и `parse_datetime` молча отдал бы None вместо реальной даты.
+    """
+    gantt = raw.get("op_gantt_task")
+    return (
+        parse_datetime(_rel_key(gantt, "sched_start_date")),
+        parse_datetime(_rel_key(gantt, "sched_finish_date")),
+    )
+
+
+def _to_int(value: Any) -> int | None:
+    """Целое из числа или строки. `CmfInt` может прийти строкой — принимаем оба вида."""
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _assignee(raw: dict[str, Any]) -> str | None:
+    """Исполнитель: сначала `responsible`, затем первый из `executors`.
+
+    На живом инстансе `executors` не заполняют — исполнитель живёт в `responsible`,
+    но фолбэк оставляем, чтобы не потерять данные там, где практика другая.
+
+    Строгий `_rel_key`: лучше «— без исполнителя», чем «CmfPerson:2b3...» в отчёте.
+    """
+    return _rel_key(raw.get("responsible"), "name") or _rel_key(raw.get("executors"), "name")
+
+
+def parse_epic(raw: dict[str, Any], *, url: str | None = None) -> Epic:
+    """Эпик — это CmfTask с logic_prefix=task.epic (отдельной модели в EvaTeam нет)."""
+    status_type = raw.get("cache_status_type")
+    activity = raw.get("activity")
+    is_active = True
+    if isinstance(activity, str):
+        is_active = activity.strip().lower() not in {"archive", "archived", "inactive"}
+    elif isinstance(activity, bool):
+        is_active = activity
+
+    plan_start, plan_end = plan_dates(raw)
+
+    return Epic(
+        id=str(raw.get("id") or ""),
+        code=raw.get("code"),
+        title=(raw.get("name") or "").strip() or "(без названия)",
+        status_code=_rel_key(raw.get("status"), "code"),
+        status_name=_rel_key(raw.get("status"), "name") or (status_type or ""),
+        status_category=status_category_from_type(status_type),
+        # У эпика родитель — CmfProject; `project` оставляем как запасной источник.
+        project_id=_rel_id(raw.get("parent")) or raw.get("parent_id") or raw.get("project_id"),
+        project_name=_rel_key(raw.get("parent"), "name") or _rel_key(raw.get("project"), "name"),
+        responsible=_rel_key(raw.get("responsible"), "name"),
+        plan_start=plan_start,
+        plan_end=plan_end,
+        deadline=parse_datetime(raw.get("deadline")),
+        priority=_to_int(raw.get("priority")),
+        # Имя пользовательского поля продублировано литералом: tasks.py импортирует dto,
+        # обратный импорт дал бы цикл. Определение — CUSTOM_ORDER_FIELD в tasks.py.
+        exec_order=_to_int(raw.get("cf_poryadok_v")),
         url=url,
         is_active=is_active,
     )
