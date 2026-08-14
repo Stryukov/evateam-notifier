@@ -8,10 +8,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Корпоративный CA. В Linux-контейнере нет системного хранилища Windows, поэтому
-# без этого шага EVATEAM_VERIFY_SSL=system упрётся в CERTIFICATE_VERIFY_FAILED:
-# трафик до EvaTeam идёт через прокси с подменой сертификата.
-# Положите файлы .crt в certs/ (сам сертификат не коммитится, см. .gitignore).
+# Недостающие звенья цепочки сертификатов.
+#
+# Сервер EvaTeam отдаёт только свой сертификат, без промежуточного
+# (GlobalSign RSA OV SSL CA 2018). Windows такое прощает — он докачивает недостающее
+# звено по AIA; OpenSSL в Linux этого не делает и падает с
+# «unable to verify the first certificate». Поэтому промежуточный кладём сами.
+#
+# Положите нужные .crt в certs/ (не коммитятся, см. .gitignore).
 # Каталог копируется целиком, поэтому сборка не падает, когда он пуст.
 COPY certs/ /usr/local/share/ca-certificates/
 RUN apt-get update \
