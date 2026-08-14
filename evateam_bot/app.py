@@ -59,6 +59,7 @@ class App:
                 risk_days=settings.summary_risk_days,
             ),
             report_dir=settings.summary_output_dir,
+            admin_group=settings.evateam_admin_group,
         )
         return cls(settings=settings, client=client, service=service, transports=transports)
 

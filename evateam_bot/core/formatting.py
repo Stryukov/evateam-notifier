@@ -13,10 +13,6 @@ from datetime import datetime
 from .messages import Button, OutgoingMessage
 from .models import Digest, Health, HealthReason, Person, Task
 
-# action-константы для кнопок онбординга
-ACTION_CONFIRM_PREFIX = "confirm_link:"  # + person_id
-ACTION_REJECT = "reject_link"
-
 # эмодзи
 EMOJI_OVERDUE = "🔴"  # срок нарушен
 EMOJI_DEADLINE = "⏳"  # срок ещё не наступил
@@ -70,34 +66,34 @@ def plural(count: int, one: str, few: str, many: str) -> str:
 
 
 def welcome_message() -> OutgoingMessage:
+    """Подсказка на произвольный текст: привязка идёт только через /start."""
     return OutgoingMessage(
         text=(
-            "👋 Привет! Я напоминаю о задачах из EvaTeam.\n\n"
-            "Чтобы начать, отправьте мне свой <b>email</b> или <b>логин</b> в EvaTeam — "
-            "я найду вашу учётную запись."
+            "👋 Я напоминаю о задачах из EvaTeam.\n\n"
+            "Отправьте /start, чтобы привязать учётную запись."
         )
     )
 
 
-def confirm_person_message(person: Person) -> OutgoingMessage:
-    ident = person.email or person.login or ""
-    tail = f" ({_esc(ident)})" if ident else ""
+def access_denied_message() -> OutgoingMessage:
+    """Отправитель не найден в EvaTeam по своему Telegram.
+
+    Намеренно не раскрываем, кто есть в системе и по какому признаку идёт поиск.
+    """
     return OutgoingMessage(
-        text=f"Нашёл: <b>{_esc(person.name)}</b>{tail}\nЭто вы?",
-        buttons=[
-            [
-                Button(text="✅ Это я", action=f"{ACTION_CONFIRM_PREFIX}{person.id}"),
-                Button(text="❌ Нет", action=ACTION_REJECT),
-            ]
-        ],
+        text=(
+            "🔒 Не удалось вас опознать.\n\n"
+            "Доступ выдаёт администратор: он указывает ваш Telegram в карточке "
+            "сотрудника в EvaTeam. Обратитесь к нему и попробуйте /start снова."
+        )
     )
 
 
-def person_not_found_message(query: str) -> OutgoingMessage:
+def not_admin_message() -> OutgoingMessage:
     return OutgoingMessage(
         text=(
-            f"Не нашёл пользователя по «{_esc(query)}». "
-            "Проверьте email/логин и попробуйте ещё раз."
+            "🔒 Сводка по проектам доступна только администраторам.\n\n"
+            "Ваши личные задачи приходят как обычно."
         )
     )
 
@@ -122,10 +118,6 @@ def unknown_command_message(command: str) -> OutgoingMessage:
     )
 
 
-def rejected_message() -> OutgoingMessage:
-    return OutgoingMessage(
-        text="Хорошо. Отправьте другой email или логин, чтобы найти нужную учётную запись."
-    )
 
 
 def _fmt_deadline(deadline: datetime) -> str:

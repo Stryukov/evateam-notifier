@@ -1,0 +1,18 @@
+services:
+  bot:
+    build: .
+    image: evateam-notifier
+    container_name: evateam-notifier
+    env_file: .env
+    environment:
+      # Планировщик считает время в этой зоне; должно совпадать с TIMEZONE в .env.
+      TZ: ${TIMEZONE:-Europe/Moscow}
+    volumes:
+      # SQLite с привязками пользователей и сгенерированные отчёты.
+      - ./data:/app/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -23,7 +23,7 @@ from aiogram.types import (
     Message,
 )
 
-from ...core.messages import OutgoingDocument, OutgoingMessage
+from ...core.messages import OutgoingDocument, OutgoingMessage, Sender
 from ..base import BotTransport
 
 logger = logging.getLogger(__name__)
@@ -79,21 +79,26 @@ class TelegramTransport(BotTransport):
         # будет истолкован как поиск сотрудника по логину.
         @self._dp.message(CommandStart())
         async def _on_start(msg: Message) -> None:
-            await self.handler.on_start(self.name, str(msg.chat.id))
+            await self.handler.on_start(self.name, _sender(msg))
 
         @self._dp.message(F.text.startswith("/"))
         async def _on_command(msg: Message) -> None:
             command, args = _parse_command(msg.text or "")
-            await self.handler.on_command(self.name, str(msg.chat.id), command, args)
+            await self.handler.on_command(self.name, _sender(msg), command, args)
 
         @self._dp.message(F.text)
         async def _on_text(msg: Message) -> None:
-            await self.handler.on_text(self.name, str(msg.chat.id), msg.text or "")
+            await self.handler.on_text(self.name, _sender(msg), msg.text or "")
 
         @self._dp.callback_query(F.data)
         async def _on_callback(cb: CallbackQuery) -> None:
             chat_id = str(cb.message.chat.id) if cb.message else str(cb.from_user.id)
-            await self.handler.on_action(self.name, chat_id, cb.data or "")
+            sender = Sender(
+                chat_id=chat_id,
+                user_id=str(cb.from_user.id) if cb.from_user else None,
+                username=cb.from_user.username if cb.from_user else None,
+            )
+            await self.handler.on_action(self.name, sender, cb.data or "")
             await cb.answer()
 
     async def start(self) -> None:
@@ -113,6 +118,16 @@ class TelegramTransport(BotTransport):
 
     async def aclose(self) -> None:
         await self._bot.session.close()
+
+
+def _sender(msg: Message) -> Sender:
+    """Отправитель события: чат для ответа + личность для проверки доступа."""
+    user = msg.from_user
+    return Sender(
+        chat_id=str(msg.chat.id),
+        user_id=str(user.id) if user else None,
+        username=user.username if user else None,
+    )
 
 
 def _parse_command(text: str) -> tuple[str, str]:

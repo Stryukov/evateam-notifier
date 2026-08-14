@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     evateam_verify_ssl: str = Field(default="true")
     # admin_mode: сервис-аккаунт (в группе Admins) видит задачи всех сотрудников
     evateam_admin_mode: bool = Field(default=True)
+    # Код группы EvaTeam, участникам которой доступна сводка по проектам (/summary).
+    evateam_admin_group: str = Field(default="Admins")
 
     # Telegram
     telegram_bot_token: str = Field(default="")

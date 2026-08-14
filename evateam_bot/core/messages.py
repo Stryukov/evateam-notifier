@@ -9,6 +9,20 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class Sender:
+    """Кто прислал событие.
+
+    Чат и отправитель — разные вещи: ответ уходит в `chat_id`, а доступ проверяется
+    по личности (`username` / `user_id`). У MAX будут свои идентификаторы, поэтому
+    объект нейтральный.
+    """
+
+    chat_id: str
+    user_id: str | None = None  # числовой id в мессенджере
+    username: str | None = None  # без «@»
+
+
+@dataclass(frozen=True)
 class Button:
     """Инлайн-кнопка. `action` — идентификатор действия, который вернётся в on_action."""
 
