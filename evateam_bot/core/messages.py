@@ -25,3 +25,17 @@ class OutgoingMessage:
 
     text: str
     buttons: list[list[Button]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class OutgoingDocument:
+    """Файл-вложение.
+
+    Содержимое передаём байтами, а не путём: транспорт может работать на другой
+    машине, и файловая система у него своя.
+    """
+
+    filename: str
+    content: bytes
+    caption: str = ""
+    mime_type: str = "application/octet-stream"

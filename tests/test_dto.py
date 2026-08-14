@@ -13,6 +13,171 @@ def test_status_category_mapping():
     assert dto.status_category_from_type(None) is StatusCategory.UNKNOWN
 
 
+def test_rel_key_does_not_fall_back_to_id():
+    """Ключевая защита: id не должен подменять собой отсутствующий код статуса.
+
+    `_rel_field` в таком случае вернул бы "CmfStatus:s1", фильтр по кодам статусов
+    молча не совпал бы ни с чем, и сводка была бы всегда пустой.
+    """
+    status = {"id": "CmfStatus:s1", "name": "TO DO"}
+    assert dto._rel_field(status, "code") == "CmfStatus:s1"  # старое, «мягкое» поведение
+    assert dto._rel_key(status, "code") is None  # новое, строгое
+    assert dto._rel_key({"code": "pause"}, "code") == "pause"
+    assert dto._rel_key([{"code": "in_review"}], "code") == "in_review"
+    assert dto._rel_key("CmfStatus:s1", "code") is None  # голая id-строка — не код
+    assert dto._rel_key(None, "code") is None
+
+
+def test_parse_task_reads_summary_fields():
+    task = dto.parse_task(
+        {
+            "id": "CmfTask:1",
+            "code": "BLT-1",
+            "name": "Задача",
+            "cache_status_type": "IN_PROGRESS",
+            "status": {"code": "in_progress", "name": "В работе"},
+            "op_gantt_task": {
+                "sched_start_date": "2026-08-01",
+                "sched_finish_date": "2026-08-31",
+            },
+            "epic_id": "CmfTask:e1",
+            "parent_id": "CmfProject:p1",
+            "responsible": {"id": "CmfPerson:u1", "name": "Иванов"},
+        }
+    )
+    assert task.status_code == "in_progress"
+    assert task.plan_start == datetime(2026, 8, 1)
+    assert task.soft_end == datetime(2026, 8, 31)
+    assert task.epic_id == "CmfTask:e1"
+    assert task.project_id == "CmfProject:p1"
+    assert task.assignee == "Иванов"
+
+
+def test_plan_dates_come_from_gantt_object():
+    """Интерфейс пишет плановые даты в CmfGanttTask, а не в поля самой задачи.
+
+    Реальный случай BLT-33: plan_*_date на CmfTask пустые, даты — в op_gantt_task.
+    """
+    task = dto.parse_task(
+        {
+            "id": "CmfTask:1",
+            "code": "BLT-33",
+            "name": "Подготовка MVP workflow n8n",
+            "plan_start_date": None,
+            "plan_end_date": None,
+            "deadline": "2026-08-11T08:00:00",
+            "op_gantt_task": {
+                "id": "CmfGanttTask:g1",
+                "sched_start_date": "2026-07-23T18:00:00",
+                "sched_finish_date": "2026-08-07T03:00:00",
+            },
+        }
+    )
+    assert task.plan_start == datetime(2026, 7, 23, 18, 0)  # мягкий
+    assert task.plan_end == datetime(2026, 8, 7, 3, 0)  # мягкий
+    assert task.deadline == datetime(2026, 8, 11, 8, 0)  # жёсткий
+    assert task.soft_end != task.hard_end  # два разных срока, не склеены
+
+
+def test_task_own_plan_fields_are_ignored():
+    """CmfTask.plan_*_date хранят устаревший мусор, которого нет в интерфейсе.
+
+    Реальный случай SPT-16: в карточке «Плановая дата окончания: Нет», а в
+    plan_end_date лежит 2026-06-05 от прошлых правок. Источник должен быть один — Гант.
+    """
+    task = dto.parse_task(
+        {
+            "id": "1",
+            "name": "SPT-16",
+            "plan_start_date": "2026-06-02",
+            "plan_end_date": "2026-06-05",
+            "op_gantt_task": {"sched_start_date": "2026-07-20T08:00:00"},
+        }
+    )
+    assert task.plan_start == datetime(2026, 7, 20, 8, 0)  # из Ганта
+    assert task.plan_end is None  # в интерфейсе пусто — и у нас пусто
+
+
+def test_no_gantt_object_means_no_plan_dates():
+    task = dto.parse_task(
+        {"id": "1", "name": "x", "plan_start_date": "2026-08-01", "plan_end_date": "2026-08-31"}
+    )
+    assert task.plan_start is None
+    assert task.plan_end is None
+
+
+def test_gantt_as_bare_id_string_yields_no_dates():
+    """Регресс на _rel_key: id гант-объекта не должен притвориться датой."""
+    task = dto.parse_task({"id": "1", "name": "x", "op_gantt_task": "CmfGanttTask:g1"})
+    assert task.plan_start is None
+    assert task.plan_end is None
+
+
+def test_epic_reads_gantt_plan_dates():
+    epic = dto.parse_epic(
+        {
+            "id": "CmfTask:e1",
+            "code": "ZAT-17",
+            "name": "Epic ЛК ЮЛ",
+            "op_gantt_task": {
+                "sched_start_date": "2028-03-20T18:00:00",
+                "sched_finish_date": "2028-07-11T10:00:00",
+            },
+        }
+    )
+    assert epic.plan_start == datetime(2028, 3, 20, 18, 0)
+    assert epic.soft_end == datetime(2028, 7, 11, 10, 0)
+    assert epic.hard_end is None
+
+
+def test_epic_reads_priority_and_execution_order():
+    epic = dto.parse_epic(
+        {"id": "1", "name": "Эпик", "priority": 1, "cf_poryadok_v": 2}
+    )
+    assert epic.priority == 1
+    assert epic.exec_order == 2
+
+
+def test_execution_order_accepts_string_and_empty():
+    """CmfInt может прийти строкой; пустое значение — это отсутствие порядка."""
+    assert dto.parse_epic({"id": "1", "name": "x", "cf_poryadok_v": "3"}).exec_order == 3
+    assert dto.parse_epic({"id": "1", "name": "x", "cf_poryadok_v": ""}).exec_order is None
+    assert dto.parse_epic({"id": "1", "name": "x"}).exec_order is None
+    assert dto.parse_epic({"id": "1", "name": "x", "cf_poryadok_v": "нет"}).exec_order is None
+
+
+def test_nearest_end_picks_earliest_of_two():
+    task = dto.parse_task(
+        {"id": "1", "name": "x", "deadline": "2026-08-11",
+         "op_gantt_task": {"sched_finish_date": "2026-08-07"}}
+    )
+    assert task.nearest_end == datetime(2026, 8, 7)
+
+
+def test_parse_epic_prefers_parent_as_project():
+    epic = dto.parse_epic(
+        {
+            "id": "CmfTask:e1",
+            "code": "MW-2",
+            "name": "Epic Концепция",
+            "cache_status_type": "OPEN",
+            "status": {"code": "pause", "name": "PAUSE"},
+            "parent": {"id": "CmfProject:p9", "name": "Мониторинг воды"},
+            "project": {"id": "CmfProject:zzz", "name": "Не тот проект"},
+        }
+    )
+    assert epic.status_code == "pause"
+    assert epic.project_id == "CmfProject:p9"
+    assert epic.project_name == "Мониторинг воды"
+
+
+def test_parse_epic_without_name_does_not_leak_id():
+    epic = dto.parse_epic(
+        {"id": "CmfTask:e1", "name": "Epic", "parent": {"id": "CmfProject:p9"}}
+    )
+    assert epic.project_name is None  # лучше «—», чем "CmfProject:p9"
+
+
 def test_parse_datetime_variants():
     assert dto.parse_datetime("2026-07-23T09:30:00") == datetime(2026, 7, 23, 9, 30)
     assert dto.parse_datetime("2026-07-23 09:30:00") == datetime(2026, 7, 23, 9, 30)

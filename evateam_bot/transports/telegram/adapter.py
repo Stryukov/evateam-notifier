@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -14,18 +15,32 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import (
+    BotCommand,
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
 
-from ...core.messages import OutgoingMessage
+from ...core.messages import OutgoingDocument, OutgoingMessage
 from ..base import BotTransport
+
+logger = logging.getLogger(__name__)
+
+#: Лимит подписи к файлу в Telegram (у текста сообщения — 4096).
+CAPTION_LIMIT = 1024
+
+#: Команды в меню Telegram.
+BOT_COMMANDS = [
+    BotCommand(command="summary", description="Сводка по проектам и эпикам"),
+    BotCommand(command="start", description="Привязать учётную запись EvaTeam"),
+]
 
 
 class TelegramTransport(BotTransport):
     name = "telegram"
+    supports_documents = True
 
     def __init__(self, token: str, proxy: str | None = None) -> None:
         super().__init__()
@@ -50,12 +65,26 @@ class TelegramTransport(BotTransport):
         markup = _to_markup(message)
         await self._bot.send_message(int(chat_id), message.text, reply_markup=markup)
 
+    async def send_document(self, chat_id: str, document: OutgoingDocument) -> None:
+        file = BufferedInputFile(document.content, filename=document.filename)
+        await self._bot.send_document(
+            int(chat_id), file, caption=_clip_caption(document.caption)
+        )
+
     # --- приём ---
 
     def _register_routes(self) -> None:
+        # ВАЖНО: aiogram проверяет хендлеры в порядке регистрации. Роут команд обязан
+        # стоять между CommandStart и F.text — иначе «/summary» уедет в on_text и
+        # будет истолкован как поиск сотрудника по логину.
         @self._dp.message(CommandStart())
         async def _on_start(msg: Message) -> None:
             await self.handler.on_start(self.name, str(msg.chat.id))
+
+        @self._dp.message(F.text.startswith("/"))
+        async def _on_command(msg: Message) -> None:
+            command, args = _parse_command(msg.text or "")
+            await self.handler.on_command(self.name, str(msg.chat.id), command, args)
 
         @self._dp.message(F.text)
         async def _on_text(msg: Message) -> None:
@@ -68,6 +97,10 @@ class TelegramTransport(BotTransport):
             await cb.answer()
 
     async def start(self) -> None:
+        try:
+            await self._bot.set_my_commands(BOT_COMMANDS)
+        except Exception:  # noqa: BLE001 — меню команд не стоит падения бота
+            logger.warning("Не удалось установить меню команд", exc_info=True)
         self._polling_task = asyncio.create_task(
             self._dp.start_polling(self._bot, handle_signals=False)
         )
@@ -80,6 +113,18 @@ class TelegramTransport(BotTransport):
 
     async def aclose(self) -> None:
         await self._bot.session.close()
+
+
+def _parse_command(text: str) -> tuple[str, str]:
+    """«/summary@my_bot аргумент» -> ("summary", "аргумент")."""
+    command, _, args = text[1:].partition(" ")
+    return command.split("@", 1)[0].strip().lower(), args.strip()
+
+
+def _clip_caption(caption: str) -> str:
+    if len(caption) <= CAPTION_LIMIT:
+        return caption
+    return caption[: CAPTION_LIMIT - 1] + "…"
 
 
 def _to_markup(message: OutgoingMessage) -> InlineKeyboardMarkup | None:
