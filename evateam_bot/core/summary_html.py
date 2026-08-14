@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from .formatting import _esc, plural
+from .formatting import _esc, plural, priority_badge
 from .models import EpicSummary, Health, ProjectSummary, Summary
 from .summary import month_ticks, position_percent, timeline_bounds, timeline_epics
 from .summary_text import HEALTH_EMOJI, HEALTH_LABEL
@@ -33,10 +33,14 @@ background:#f9fafb;border-left:5px solid var(--none);margin-bottom:22px}
 .kpi .n{font-size:26px;font-weight:700;line-height:1.1}
 .kpi .l{font-size:12px;color:var(--muted);margin-top:2px}
 .kpi.late .n{color:var(--late)}.kpi.risk .n{color:var(--risk)}.kpi.none .n{color:var(--none)}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+/* table-layout:fixed — иначе каждая таблица эпика считает ширины по своему
+   содержимому, колонки соседних эпиков разъезжаются, а пустая ячейка-маркер
+   схлопывается и утягивает название задачи влево. */
+table{width:100%;border-collapse:collapse;font-size:14px;table-layout:fixed}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);
+vertical-align:top;overflow-wrap:anywhere}
 th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600}
-td.dot{width:26px;text-align:center}
+td.dot{text-align:center}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 .miss{color:var(--none);font-style:italic}
@@ -88,6 +92,22 @@ color:var(--muted);font-size:12px}
   a{color:inherit;text-decoration:none}
 }
 """
+
+
+# Единые ширины колонок: одинаковые для всех таблиц задач, поэтому колонки соседних
+# эпиков выстраиваются вертикально, а пустая ячейка-маркер держит свою ширину.
+_TASK_COLS = (
+    "<colgroup>"
+    '<col style="width:34px"><col style="width:38%"><col style="width:14%">'
+    '<col style="width:18%"><col style="width:15%"><col style="width:15%">'
+    "</colgroup>"
+)
+_ATTENTION_COLS = (
+    "<colgroup>"
+    '<col style="width:34px"><col style="width:32%"><col style="width:18%">'
+    '<col style="width:20%"><col style="width:30%">'
+    "</colgroup>"
+)
 
 
 def render_html(summary: Summary, *, title: str = "Сводка по проектам") -> str:
@@ -230,6 +250,8 @@ def _timeline_row(item: EpicSummary, start: date, end: date) -> str:
     classes = f"{item.health.value}{' derived' if item.dates_are_derived else ''}{open_cls}"
     title = "окончание не задано" if item.open_ended else span
     label = f"{item.epic.code} · {item.epic.title}" if item.epic.code else item.epic.title
+    badge = priority_badge(item.epic.priority)
+    label = f"{badge} {label}" if badge else label
 
     # Крайний срок — отдельная засечка, он живёт по своей шкале.
     hard = ""
@@ -260,7 +282,7 @@ def _attention_block(summary: Summary) -> str:
     )
     return (
         "<h2>Требуют решения</h2>"
-        "<table><thead><tr><th></th><th>Эпик</th><th>Проект</th>"
+        f"<table>{_ATTENTION_COLS}<thead><tr><th></th><th>Эпик</th><th>Проект</th>"
         "<th>Сроки</th><th>Комментарий</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
@@ -328,7 +350,7 @@ def _epic_block(item: EpicSummary) -> str:
     )
     return (
         head
-        + "<table><thead><tr><th></th><th>Задача</th><th>Статус</th>"
+        + f"<table>{_TASK_COLS}<thead><tr><th></th><th>Задача</th><th>Статус</th>"
         "<th>Исполнитель</th><th>Плановая дата</th><th>Крайний срок</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
@@ -378,9 +400,11 @@ def _tone(health: Health) -> str:
 def _epic_link(item: EpicSummary) -> str:
     epic = item.epic
     text = f"{epic.code} · {epic.title}" if epic.code else epic.title
+    badge = priority_badge(epic.priority)
+    prefix = f"{badge} " if badge else ""
     if epic.url:
-        return f'<a href="{_esc(epic.url)}">{_esc(text)}</a>'
-    return _esc(text)
+        return f'{prefix}<a href="{_esc(epic.url)}">{_esc(text)}</a>'
+    return f"{prefix}{_esc(text)}"
 
 
 def _task_link(task) -> str:

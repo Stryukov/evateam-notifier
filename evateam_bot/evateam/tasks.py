@@ -18,6 +18,21 @@ METHOD_KANBAN_LIST = "CmfKanbanBoard.list"
 METHOD_PROJECT_LIST = "CmfProject.list"
 METHOD_STATUS_LIST = "CmfStatus.list"
 
+# Плановые даты («мягкий» срок) живут НЕ на CmfTask, а в связанном CmfGanttTask:
+# CmfTask.op_gantt_task -> sched_start_date / sched_finish_date. Именно их показывает
+# интерфейс как «Плановая дата начала/окончания».
+# ВНИМАНИЕ: собственные plan_start_date/plan_end_date у CmfTask — ДРУГАЯ пара полей.
+# Интерфейс их не показывает и не обновляет, но там остаются устаревшие значения,
+# поэтому мы их намеренно НЕ запрашиваем и НЕ используем как фолбэк (см. dto.plan_dates).
+# `deadline` на CmfTask — «Крайний срок», жёсткий дедлайн.
+GANTT_START_FIELD = "op_gantt_task.sched_start_date"
+GANTT_END_FIELD = "op_gantt_task.sched_finish_date"
+
+# «Порядок выполнения» — пользовательское поле (CmfCustField, тип CmfInt на CmfTask).
+# Заполняется вручную (1, 2, 3…) для эпиков с одинаковым приоритетом.
+# ВНИМАНИЕ: в дамп `fields: ["**"]` пользовательские поля не попадают — запрашивать явно.
+CUSTOM_ORDER_FIELD = "cf_poryadok_v"
+
 # Поля задачи, которые запрашиваем (nested-поля тоже поддерживаются, напр. "responsible.name").
 TASK_FIELDS = [
     "id",
@@ -29,6 +44,12 @@ TASK_FIELDS = [
     "activity",
     "main_list.code",
     "project.name",
+    # Плановые сроки и код статуса нужны вечернему напоминанию, чтобы отличать
+    # сорванный крайний срок от отставания от плана. Дайджест их не выводит.
+    "status.code",
+    "status.name",
+    GANTT_START_FIELD,
+    GANTT_END_FIELD,
 ]
 
 PERSON_FIELDS = ["id", "name", "login", "email", "code"]
@@ -46,16 +67,6 @@ EPIC_LOGIC_PREFIX = "task.epic"
 # IN_PROGRESS — в работе, IN_REVIEW — ждут подтверждения закрытия.
 ACTIVE_STATUS_TYPES = ("IN_PROGRESS", "IN_REVIEW")
 
-# Плановые даты («мягкий» срок) живут НЕ на CmfTask, а в связанном CmfGanttTask:
-# CmfTask.op_gantt_task -> sched_start_date / sched_finish_date. Именно их показывает
-# интерфейс как «Плановая дата начала/окончания».
-# ВНИМАНИЕ: собственные plan_start_date/plan_end_date у CmfTask — ДРУГАЯ пара полей.
-# Интерфейс их не показывает и не обновляет, но там остаются устаревшие значения,
-# поэтому мы их намеренно НЕ запрашиваем и НЕ используем как фолбэк (см. dto.plan_dates).
-# `deadline` на CmfTask — «Крайний срок», жёсткий дедлайн.
-GANTT_START_FIELD = "op_gantt_task.sched_start_date"
-GANTT_END_FIELD = "op_gantt_task.sched_finish_date"
-
 # Важно: различать статусы надо по `status.code`, а не по `cache_status_type` —
 # у кода `pause` («Пауза», «Приостановлен») тип как раз OPEN, и по типу его не отделить.
 EPIC_FIELDS = [
@@ -71,6 +82,7 @@ EPIC_FIELDS = [
     GANTT_END_FIELD,
     "deadline",
     "priority",
+    CUSTOM_ORDER_FIELD,
     "responsible.name",
     "parent_id",
     "parent.name",

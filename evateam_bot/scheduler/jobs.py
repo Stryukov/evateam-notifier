@@ -24,6 +24,9 @@ async def _run(job: str, *, no_send: bool = False, chat: str | None = None) -> N
         elif job == "deadlines":
             count = await app.service.send_deadline_reminders()
             print(f"Напоминания о просрочке отправлены: {count} пользователям")
+        elif job == "evening":
+            count = await app.service.send_evening_reminders()
+            print(f"Вечерние напоминания отправлены: {count} пользователям")
         elif job == "summary":
             await _run_summary(app, no_send=no_send, chat=chat)
         else:  # pragma: no cover
@@ -63,7 +66,9 @@ async def _run_summary(app: App, *, no_send: bool, chat: str | None) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="Ручной запуск заданий бота")
-    parser.add_argument("--run", required=True, choices=["digest", "deadlines", "summary"])
+    parser.add_argument(
+        "--run", required=True, choices=["digest", "deadlines", "evening", "summary"]
+    )
     parser.add_argument("--chat", help="отправить только в этот chat_id (только для summary)")
     parser.add_argument(
         "--no-send",

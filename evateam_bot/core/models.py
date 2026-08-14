@@ -148,6 +148,8 @@ class Epic:
     project_id: str | None = None
     project_name: str | None = None
     responsible: str | None = None
+    priority: int | None = None  # CmfTask.priority: 0 — обычный, больше — выше
+    exec_order: int | None = None  # «Порядок выполнения», пользовательское поле
     plan_start: datetime | None = None  # мягкий срок, из CmfGanttTask
     plan_end: datetime | None = None  # мягкий срок, из CmfGanttTask
     deadline: datetime | None = None  # жёсткий: «Крайний срок»
@@ -214,6 +216,30 @@ class EpicSummary:
         return (self.total - self.tasks_without_date) / self.total
 
 
+#: Эпики без проставленного порядка выполнения идут после тех, у кого он задан.
+_LAST_ORDER = 10**9
+_FAR_FUTURE = datetime.max
+
+
+def epic_sort_key(item: EpicSummary) -> tuple:
+    """Приоритет → порядок выполнения → светофор → срок.
+
+    Первые два ключа управленческие: их задаёт руководитель в трекере. Светофор и срок
+    остаются тайбрейком — они больше не определяют порядок, но дают устойчивую и
+    осмысленную последовательность внутри одного приоритета.
+
+    Живёт в models, а не в summary: тем же ключом сортируется `Summary.attention`.
+    """
+    nearest = min((d for d in (item.end_date, item.hard_end) if d), default=_FAR_FUTURE)
+    return (
+        -(item.epic.priority or 0),
+        item.epic.exec_order if item.epic.exec_order is not None else _LAST_ORDER,
+        -HEALTH_SEVERITY[item.health],
+        nearest,
+        item.epic.title,
+    )
+
+
 @dataclass(frozen=True)
 class ProjectSummary:
     """Проект с эпиками, отсортированными по убыванию проблемности."""
@@ -277,8 +303,15 @@ class Summary:
 
     @property
     def attention(self) -> list[EpicSummary]:
-        """Эпики, требующие внимания руководителя (manage by exception)."""
-        return [e for e in self.all_epics if e.health in (Health.LATE, Health.RISK)]
+        """Эпики, требующие внимания руководителя (manage by exception).
+
+        Порядок — по приоритету и порядку выполнения, как и везде: список читают
+        сверху вниз, и первым должно стоять то, чем заниматься в первую очередь.
+        """
+        return sorted(
+            (e for e in self.all_epics if e.health in (Health.LATE, Health.RISK)),
+            key=epic_sort_key,
+        )
 
     @property
     def blockers(self) -> list[tuple[EpicSummary, Task]]:

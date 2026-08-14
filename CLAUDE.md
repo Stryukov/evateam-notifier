@@ -75,6 +75,11 @@
   **Дорожная карта строится только по мягким.** Светофор: 🔴 — сорван жёсткий срок;
   🟡 — отстаём от мягкого либо любой срок в пределах `SUMMARY_RISK_DAYS`; ⚪ — сроков нет.
   В моделях это `Task.soft_end` / `Task.hard_end`; общего «effective_end» нет намеренно.
+- **Пользовательские поля не приходят в `fields: ["**"]`** — запрашивать явно по имени.
+  «Порядок выполнения» — `cf_poryadok_v` (`CmfCustField`, тип `CmfInt` на `CmfTask`),
+  константа `CUSTOM_ORDER_FIELD`. Сортировка эпиков: приоритет → порядок выполнения →
+  светофор → срок; ключ — `models.epic_sort_key` (лежит в models, чтобы им же сортировался
+  `Summary.attention`). Значок приоритета показываем только при `priority != 0`.
 - Если в Ганте окончание окажется раньше начала, `_epic_plan_dates` отбрасывает окончание,
   а не переставляет даты: иначе полоса получит отрицательную ширину, а Google Timeline
   отвергнет строку.
@@ -90,7 +95,7 @@
 ## Запуск и проверка
 
 - Прод: `python -m evateam_bot.main`
-- Задания вручную: `python -m evateam_bot.scheduler.jobs --run digest|deadlines|summary`
+- Задания вручную: `python -m evateam_bot.scheduler.jobs --run digest|deadlines|evening|summary`
   (у `summary` есть `--no-send` — собрать файлы без отправки, и `--chat <id>`)
 - Smoke API: `python -m evateam_bot.evateam.smoke --person <email>` / `--epics`
 - Тесты: `pytest`

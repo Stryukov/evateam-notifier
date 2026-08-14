@@ -160,6 +160,33 @@ async def test_deadline_reminder_dedup(repo):
     assert len(transport.sent) == 1
 
 
+async def test_evening_reminder_sent_when_there_is_work(repo):
+    tasks = FakeTasks(tasks={"p1": [
+        Task(id="t1", code="PRJ-1", title="В работе", status_name="В работе",
+             status_category=StatusCategory.IN_PROGRESS),
+    ]})
+    service, transport = _make_service(repo, tasks)
+    repo.link(transport="telegram", chat_id="100", person_id="p1", person_name="Пётр")
+
+    count = await service.send_evening_reminders(now=datetime(2026, 8, 5, 16, 0))
+    assert count == 1
+    assert "Итоги дня" in transport.texts
+    assert "PRJ-1" in transport.texts
+
+
+async def test_evening_reminder_skips_users_without_active_tasks(repo):
+    """Закрывать и двигать нечего — не дёргаем человека."""
+    tasks = FakeTasks(tasks={"p1": [
+        Task(id="t1", code="PRJ-1", title="Не начата", status_name="TO DO",
+             status_category=StatusCategory.OPEN),
+    ]})
+    service, transport = _make_service(repo, tasks)
+    repo.link(transport="telegram", chat_id="100", person_id="p1", person_name="Пётр")
+
+    assert await service.send_evening_reminders() == 0
+    assert transport.sent == []
+
+
 # --- сводка по проектам --------------------------------------------------------
 
 

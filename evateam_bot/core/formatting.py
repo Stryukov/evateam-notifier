@@ -11,7 +11,7 @@ import html
 from datetime import datetime
 
 from .messages import Button, OutgoingMessage
-from .models import Digest, Person, Task
+from .models import Digest, Health, HealthReason, Person, Task
 
 # action-константы для кнопок онбординга
 ACTION_CONFIRM_PREFIX = "confirm_link:"  # + person_id
@@ -20,6 +20,10 @@ ACTION_REJECT = "reject_link"
 # эмодзи
 EMOJI_OVERDUE = "🔴"  # срок нарушен
 EMOJI_DEADLINE = "⏳"  # срок ещё не наступил
+EMOJI_RISK = "🟡"  # под угрозой: отстаём от плана или срок на подходе
+
+#: Горизонт «под угрозой» для вечернего напоминания, дней.
+EVENING_RISK_DAYS = 3
 
 # Иконки приоритета — по значениям EvaTeam (0=Обычный), в стиле таск-трекера.
 PRIORITY_ICONS = {
@@ -34,6 +38,17 @@ PRIORITY_ICONS = {
 
 def _priority_icon(priority: int | None) -> str:
     return PRIORITY_ICONS.get(priority if priority is not None else 0, "🟰")
+
+
+def priority_badge(priority: int | None) -> str:
+    """Значок приоритета — только если он отличается от «Обычного».
+
+    Обычный приоритет стоит у подавляющего большинства задач; показывать его значок
+    везде — значит обесценить сам сигнал. Пусто, если приоритет 0 или не задан.
+    """
+    if not priority:
+        return ""
+    return PRIORITY_ICONS.get(priority, "")
 
 
 def _esc(text: str) -> str:
@@ -157,6 +172,55 @@ def digest_message(person: Person, digest: Digest, now: datetime | None = None) 
     # «Не начаты» показываем только числом, без списка.
     if digest.not_started:
         parts += ["", f"🆕 Не начатых задач: {len(digest.not_started)}"]
+    return OutgoingMessage(text="\n".join(parts))
+
+
+def _evening_task_line(task: Task, now: datetime) -> str:
+    """Строка задачи с пометкой, какой именно срок под угрозой.
+
+    Правило светофора берём из core.summary — одно на весь проект, чтобы отчёт
+    руководителю и напоминание исполнителю не расходились.
+    """
+    from .summary import combined_health  # ниже по слою: summary импортирует formatting
+
+    health, reason = combined_health(task.soft_end, task.hard_end, now, EVENING_RISK_DAYS)
+    mark = {Health.LATE: EMOJI_OVERDUE, Health.RISK: EMOJI_RISK}.get(health, "")
+    prefix = f"{mark} " if mark else ""
+
+    line = f"• {prefix}{_priority_icon(task.priority)} {_code_html(task)}{_esc(task.title)}"
+    if reason is HealthReason.LATE_HARD and task.hard_end:
+        line += f" — <b>крайний срок {_fmt_date(task.hard_end)}</b>"
+    elif reason is HealthReason.BEHIND_PLAN and task.soft_end:
+        line += f" — отстаёт от плана ({_fmt_date(task.soft_end)})"
+    elif reason is HealthReason.DUE_SOON:
+        nearest = task.nearest_end
+        if nearest:
+            line += f" — срок {_fmt_date(nearest)}"
+    return line
+
+
+def _fmt_date(value: datetime) -> str:
+    return value.strftime("%d.%m")
+
+
+def evening_message(
+    person: Person, digest: Digest, now: datetime | None = None
+) -> OutgoingMessage:
+    """Напоминание в конце дня: закрыть сделанное и подвинуть съехавшие сроки."""
+    now = now or datetime.now()
+    parts = [
+        "🕔 <b>Итоги дня</b>",
+        "",
+        "Отметьте задачи, которые сегодня завершили, и подвиньте сроки, "
+        "если планы изменились — так они не превратятся в просрочку.",
+    ]
+
+    if digest.in_progress:
+        parts += ["", f"🔧 В работе ({len(digest.in_progress)}):"]
+        parts += [_evening_task_line(t, now) for t in digest.in_progress]
+    if digest.waiting:
+        parts += ["", f"⏳ Ждут подтверждения ({len(digest.waiting)}):"]
+        parts += [_evening_task_line(t, now) for t in digest.waiting]
     return OutgoingMessage(text="\n".join(parts))
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .formatting import _esc
+from .formatting import _esc, priority_badge
 from .messages import OutgoingMessage
 from .models import EpicSummary, Health, HealthReason, Summary
 
@@ -130,7 +130,8 @@ def _epic_section(title: str, epics: list[EpicSummary], max_items: int) -> list[
 def _epic_line(item: EpicSummary) -> str:
     epic = item.epic
     project = f"[{_esc(epic.project_name)}] " if epic.project_name else ""
-    code = _link(epic.code, epic.url)
+    badge = priority_badge(epic.priority)
+    code = (f"{badge} " if badge else "") + _link(epic.code, epic.url)
     tail = [note for note in (_deadline_note(item),) if note]
     if item.is_idle:
         tail.append("нет задач в работе")

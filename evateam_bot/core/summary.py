@@ -27,6 +27,7 @@ from .models import (
     Summary,
     SummaryKpi,
     Task,
+    epic_sort_key,
 )
 
 #: Коды статусов (CmfStatus.code), которые считаем «идёт работа».
@@ -243,7 +244,7 @@ def _group_by_project(
                 or next((e.epic.project_name for e in items if e.epic.project_name), None)
                 or NO_PROJECT_NAME
             ),
-            epics=sorted(items, key=_epic_sort_key),
+            epics=sorted(items, key=epic_sort_key),
             health=worst(e.health for e in items),
         )
         for project_id, items in grouped.items()
@@ -289,11 +290,8 @@ def _task_sort_key(task: Task, health: Health) -> tuple:
     )
 
 
-def _epic_sort_key(item: EpicSummary) -> tuple:
-    nearest = min(
-        (d for d in (item.end_date, item.hard_end) if d), default=_FAR_FUTURE
-    )
-    return (-HEALTH_SEVERITY[item.health], nearest, item.epic.title)
+# Ключ сортировки эпиков живёт в models.epic_sort_key — им же сортируется
+# Summary.attention. Здесь только переиспользуем.
 
 
 def _project_sort_key(item: ProjectSummary) -> tuple:
@@ -306,6 +304,8 @@ def _project_sort_key(item: ProjectSummary) -> tuple:
 def timeline_epics(summary: Summary) -> list[EpicSummary]:
     """Эпики, которые можно разместить на карте: нужна хотя бы плановая дата начала.
 
+    Порядок — тот же, что в карточках: проекты по светофору, эпики по приоритету
+    (`all_epics` уже отдаёт их отсортированными).
     Полоса без планового окончания рисуется открытой — см. `open_ended`.
     """
     return [e for e in summary.all_epics if e.start_date]

@@ -203,6 +203,25 @@ class BotService:
                 logger.exception("Digest failed for chat %s", link.chat_id)
         return sent
 
+    async def send_evening_reminders(self, now: datetime | None = None) -> int:
+        """Напомнить закрыть выполненное и подвинуть сроки. Возвращает кол-во."""
+        now = now or datetime.now()
+        sent = 0
+        for link in self._repo.list_enabled():
+            try:
+                tasks = await self._tasks.get_tasks_for_person(link.person_id)
+                digest = build_digest(tasks)
+                # Закрывать и двигать нечего — не дёргаем человека.
+                if not digest.in_progress and not digest.waiting:
+                    continue
+                person = Person(id=link.person_id, name=link.person_name)
+                message = formatting.evening_message(person, digest, now)
+                await self._transport(link.transport).send_message(link.chat_id, message)
+                sent += 1
+            except Exception:  # noqa: BLE001 — один сбойный пользователь не рушит рассылку
+                logger.exception("Evening reminder failed for chat %s", link.chat_id)
+        return sent
+
     async def send_deadline_reminders(self, now: datetime | None = None) -> int:
         """Разослать напоминания о просроченных задачах (с дедупом за день)."""
         now = now or datetime.now()

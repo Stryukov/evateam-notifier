@@ -159,6 +159,8 @@ async def test_epic_query_asks_for_gantt_dates_and_status_code():
         "op_gantt_task.sched_start_date",
         "op_gantt_task.sched_finish_date",
         "parent_id",
+        "priority",
+        "cf_poryadok_v",  # пользовательское поле: в ["**"] не приходит, нужен явный запрос
     ):
         assert expected in fields
     # Собственные поля задачи не запрашиваем: там устаревшие значения.

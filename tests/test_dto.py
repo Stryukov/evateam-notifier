@@ -130,6 +130,22 @@ def test_epic_reads_gantt_plan_dates():
     assert epic.hard_end is None
 
 
+def test_epic_reads_priority_and_execution_order():
+    epic = dto.parse_epic(
+        {"id": "1", "name": "Эпик", "priority": 1, "cf_poryadok_v": 2}
+    )
+    assert epic.priority == 1
+    assert epic.exec_order == 2
+
+
+def test_execution_order_accepts_string_and_empty():
+    """CmfInt может прийти строкой; пустое значение — это отсутствие порядка."""
+    assert dto.parse_epic({"id": "1", "name": "x", "cf_poryadok_v": "3"}).exec_order == 3
+    assert dto.parse_epic({"id": "1", "name": "x", "cf_poryadok_v": ""}).exec_order is None
+    assert dto.parse_epic({"id": "1", "name": "x"}).exec_order is None
+    assert dto.parse_epic({"id": "1", "name": "x", "cf_poryadok_v": "нет"}).exec_order is None
+
+
 def test_nearest_end_picks_earliest_of_two():
     task = dto.parse_task(
         {"id": "1", "name": "x", "deadline": "2026-08-11",

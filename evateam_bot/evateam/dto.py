@@ -170,6 +170,18 @@ def plan_dates(raw: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
     )
 
 
+def _to_int(value: Any) -> int | None:
+    """Целое из числа или строки. `CmfInt` может прийти строкой — принимаем оба вида."""
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
 def _assignee(raw: dict[str, Any]) -> str | None:
     """Исполнитель: сначала `responsible`, затем первый из `executors`.
 
@@ -207,6 +219,10 @@ def parse_epic(raw: dict[str, Any], *, url: str | None = None) -> Epic:
         plan_start=plan_start,
         plan_end=plan_end,
         deadline=parse_datetime(raw.get("deadline")),
+        priority=_to_int(raw.get("priority")),
+        # Имя пользовательского поля продублировано литералом: tasks.py импортирует dto,
+        # обратный импорт дал бы цикл. Определение — CUSTOM_ORDER_FIELD в tasks.py.
+        exec_order=_to_int(raw.get("cf_poryadok_v")),
         url=url,
         is_active=is_active,
     )

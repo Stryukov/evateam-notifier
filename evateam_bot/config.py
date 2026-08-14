@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     timezone: str = Field(default="Europe/Moscow")
     digest_time: str = Field(default="09:00")
     deadline_check_time: str = Field(default="09:30")
+    # Вечернее напоминание: закрыть выполненное, подвинуть сроки.
+    evening_check_time: str = Field(default="16:00")
 
     # Хранилище
     db_path: str = Field(default="data/bot.db")
@@ -72,6 +74,9 @@ class Settings(BaseSettings):
 
     def parsed_deadline_time(self) -> tuple[int, int]:
         return _parse_hhmm(self.deadline_check_time)
+
+    def parsed_evening_time(self) -> tuple[int, int]:
+        return _parse_hhmm(self.evening_check_time)
 
     def parsed_epic_status_codes(self) -> tuple[str, ...]:
         return _parse_csv_list(self.summary_epic_status_codes)

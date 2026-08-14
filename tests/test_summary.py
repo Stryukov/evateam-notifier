@@ -22,7 +22,8 @@ NOW = datetime(2026, 8, 5, 12, 0)
 
 
 def _epic(id_, *, code=None, title="Эпик", status="in_progress", project="p1",
-          project_name="Проект", start=None, end=None, hard=None):
+          project_name="Проект", start=None, end=None, hard=None,
+          priority=None, order=None):
     return Epic(
         id=id_,
         code=code or id_,
@@ -32,6 +33,8 @@ def _epic(id_, *, code=None, title="Эпик", status="in_progress", project="p1
         status_category=StatusCategory.IN_PROGRESS,
         project_id=project,
         project_name=project_name,
+        priority=priority,
+        exec_order=order,
         plan_start=start,
         plan_end=end,
         deadline=hard,
@@ -305,6 +308,57 @@ def test_projects_sorted_with_problems_first():
     assert [p.name for p in summary.projects] == ["Красный", "Зелёный"]
     assert summary.projects[0].health is Health.LATE
     assert summary.projects[0].late_epics == 1
+
+
+def test_epics_sorted_by_priority_then_order():
+    portfolio = _portfolio([
+        _epic("normal", title="Обычный"),
+        _epic("high2", title="Высокий второй", priority=1, order=2),
+        _epic("crit", title="Критичный", priority=2),
+        _epic("high1", title="Высокий первый", priority=1, order=1),
+    ])
+    epics = build_summary(portfolio, now=NOW).projects[0].epics
+    assert [e.epic.id for e in epics] == ["crit", "high1", "high2", "normal"]
+
+
+def test_priority_outweighs_health():
+    """Приоритет задаёт руководитель — он важнее автоматического светофора."""
+    portfolio = _portfolio([
+        _epic("red_normal", hard=datetime(2026, 1, 1)),  # просрочен, обычный
+        _epic("green_high", end=datetime(2027, 1, 1), priority=1),  # по плану, высокий
+    ])
+    epics = build_summary(portfolio, now=NOW).projects[0].epics
+    assert [e.epic.id for e in epics] == ["green_high", "red_normal"]
+
+
+def test_epics_without_order_go_after_ordered():
+    portfolio = _portfolio([
+        _epic("no_order", priority=1),
+        _epic("ordered", priority=1, order=5),
+    ])
+    epics = build_summary(portfolio, now=NOW).projects[0].epics
+    assert [e.epic.id for e in epics] == ["ordered", "no_order"]
+
+
+def test_health_is_tiebreak_within_same_priority():
+    portfolio = _portfolio([
+        _epic("ok", end=datetime(2027, 1, 1), priority=1),
+        _epic("late", hard=datetime(2026, 1, 1), priority=1),
+    ])
+    epics = build_summary(portfolio, now=NOW).projects[0].epics
+    assert [e.epic.id for e in epics] == ["late", "ok"]
+
+
+def test_attention_and_timeline_share_the_sort_order():
+    portfolio = _portfolio([
+        _epic("low", hard=datetime(2026, 1, 1), start=datetime(2026, 1, 1),
+              end=datetime(2026, 2, 1)),
+        _epic("high", hard=datetime(2026, 1, 1), start=datetime(2026, 1, 1),
+              end=datetime(2026, 2, 1), priority=2),
+    ])
+    summary = build_summary(portfolio, now=NOW)
+    assert [e.epic.id for e in summary.attention] == ["high", "low"]
+    assert [e.epic.id for e in timeline_epics(summary)] == ["high", "low"]
 
 
 def test_tasks_sorted_late_first():

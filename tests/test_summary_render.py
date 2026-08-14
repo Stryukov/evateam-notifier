@@ -12,7 +12,7 @@ NOW = datetime(2026, 8, 5, 12, 0)
 
 
 def _epic(id_, *, title="Эпик", start=None, end=None, hard=None, project="p1",
-          project_name="Проект", url=None):
+          project_name="Проект", url=None, priority=None, order=None):
     return Epic(
         id=id_,
         code=id_.upper(),
@@ -22,6 +22,8 @@ def _epic(id_, *, title="Эпик", start=None, end=None, hard=None, project="p1
         status_category=StatusCategory.IN_PROGRESS,
         project_id=project,
         project_name=project_name,
+        priority=priority,
+        exec_order=order,
         plan_start=start,
         plan_end=end,
         deadline=hard,
@@ -186,6 +188,38 @@ def test_timeline_uses_plan_dates_not_deadline():
     """Дорожная карта строится по мягким срокам — эпик только с крайним не на карте."""
     html = render_html(_summary([_epic("e1", hard=datetime(2026, 9, 1))]))
     assert "дорожную карту построить не из чего" in html
+
+
+def test_priority_badge_only_for_non_normal():
+    from evateam_bot.core.formatting import PRIORITY_ICONS
+
+    high = render_html(_summary([_epic("e1", priority=1, hard=datetime(2026, 1, 1))]))
+    assert PRIORITY_ICONS[1] in high
+
+    normal = render_html(_summary([_epic("e1", priority=0, hard=datetime(2026, 1, 1))]))
+    assert PRIORITY_ICONS[0] not in normal  # 🟰 не должен появляться
+
+    unset = render_html(_summary([_epic("e1", hard=datetime(2026, 1, 1))]))
+    assert PRIORITY_ICONS[0] not in unset
+
+
+def test_execution_order_is_not_displayed():
+    html = render_html(_summary([_epic("e1", priority=1, order=7,
+                                       hard=datetime(2026, 1, 1))]))
+    assert ">7<" not in html
+    assert "Порядок" not in html
+
+
+def test_tables_use_fixed_layout_with_shared_columns():
+    """Иначе колонки соседних эпиков разъезжаются, а пустой маркер утягивает название."""
+    summary = _summary(
+        [_epic("a", hard=datetime(2026, 1, 1)), _epic("b", hard=datetime(2026, 1, 1))],
+        {"a": [_task("t1")], "b": [_task("t2", assignee=None)]},
+    )
+    html = render_html(summary)
+    assert "table-layout:fixed" in html.replace(" ", "")
+    # Обе таблицы задач получили одинаковый colgroup.
+    assert html.count('<col style="width:34px">') >= 2
 
 
 def test_missing_values_are_explicit():
