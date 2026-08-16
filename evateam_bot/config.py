@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     deadline_check_time: str = Field(default="09:30")
     # Вечернее напоминание: закрыть выполненное, подвинуть сроки.
     evening_check_time: str = Field(default="16:00")
+    # Дни рассылок в формате cron (APScheduler): mon-fri, mon-sun, "mon,wed,fri".
+    schedule_days: str = Field(default="mon-fri")
 
     # Хранилище
     db_path: str = Field(default="data/bot.db")
