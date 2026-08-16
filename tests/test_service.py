@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 
 from evateam_bot.core import formatting
-from evateam_bot.core.messages import OutgoingDocument, OutgoingMessage
+from evateam_bot.core.messages import OutgoingDocument, OutgoingMessage, Sender
 from evateam_bot.core.models import Epic, Person, Portfolio, StatusCategory, Task
 from evateam_bot.core.summary import SummaryOptions
 from evateam_bot.service import BotService
@@ -48,12 +48,27 @@ class TextOnlyTransport(FakeTransport):
 
 
 class FakeTasks:
-    def __init__(self, people=None, tasks=None):
+    """Подменяет EvaTeam. `by_telegram` — карта username/id -> Person."""
+
+    def __init__(self, people=None, tasks=None, by_telegram=None, admins=()):
         self._people = people or {}
         self._tasks = tasks or {}
+        self._by_telegram = by_telegram or {}
+        self._admins = set(admins)
+        self.admin_checks: list[str] = []
 
     async def find_person(self, query):
         return self._people.get(query.strip(), [])
+
+    async def find_person_by_telegram(self, username, user_id=None):
+        for key in (username, user_id):
+            if key and key.lower() in self._by_telegram:
+                return self._by_telegram[key.lower()]
+        return None
+
+    async def is_admin(self, person_id, group_code="Admins"):
+        self.admin_checks.append(person_id)
+        return person_id in self._admins
 
     async def get_tasks_for_person(self, person_id):
         return self._tasks.get(person_id, [])
@@ -110,22 +125,52 @@ def _make_service(repo, tasks, *, portfolio=None, report_dir=None, transport=Non
     return service, transport
 
 
-async def test_onboarding_flow_links_user(repo):
-    person = Person(id="CmfPerson:1", name="Иван Иванов", email="ivan@x.ru")
-    tasks = FakeTasks(people={"ivan@x.ru": [person]})
+PERSON = Person(id="CmfPerson:1", name="Иван Иванов", email="ivan@x.ru")
+
+
+def _sender(chat_id="100", username="ivanov", user_id="777"):
+    return Sender(chat_id=chat_id, user_id=user_id, username=username)
+
+
+async def test_start_links_user_known_by_telegram(repo):
+    tasks = FakeTasks(by_telegram={"ivanov": PERSON})
     service, transport = _make_service(repo, tasks)
 
-    await service.on_start("telegram", "100")
-    await service.on_text("telegram", "100", "ivan@x.ru")
-    # предложено подтверждение
-    confirm_action = transport.sent[-1][1].buttons[0][0].action
-    assert confirm_action == f"{formatting.ACTION_CONFIRM_PREFIX}CmfPerson:1"
+    await service.on_start("telegram", _sender())
 
-    await service.on_action("telegram", "100", confirm_action)
     link = repo.get(transport="telegram", chat_id="100")
     assert link is not None
     assert link.person_id == "CmfPerson:1"
-    assert "привязаны" in transport.sent[-1][1].text
+    assert "привязаны" in transport.texts
+
+
+async def test_start_matches_by_numeric_id(repo):
+    tasks = FakeTasks(by_telegram={"212737863": PERSON})
+    service, transport = _make_service(repo, tasks)
+
+    await service.on_start("telegram", _sender(username=None, user_id="212737863"))
+
+    assert repo.get(transport="telegram", chat_id="100") is not None
+
+
+async def test_unknown_telegram_is_refused_and_not_stored(repo):
+    """Ключевая защита: чужой не привязывается и в базу не попадает."""
+    service, transport = _make_service(repo, FakeTasks(by_telegram={"ivanov": PERSON}))
+
+    await service.on_start("telegram", _sender(username="stranger"))
+
+    assert repo.get(transport="telegram", chat_id="100") is None
+    assert "Не удалось вас опознать" in transport.texts
+
+
+async def test_email_in_text_no_longer_links_anyone(repo):
+    """Раньше так можно было привязаться к любому сотруднику по его email."""
+    service, transport = _make_service(repo, FakeTasks(by_telegram={"ivanov": PERSON}))
+
+    await service.on_text("telegram", _sender(username="stranger"), "ivan@x.ru")
+
+    assert repo.get(transport="telegram", chat_id="100") is None
+    assert "/start" in transport.texts
 
 
 async def test_daily_digest_sent_to_linked_user(repo):
@@ -199,6 +244,10 @@ def test_service_still_builds_without_summary_arguments(repo):
     assert service is not None
 
 
+def _linked_admin_tasks():
+    return FakeTasks(by_telegram={"ivanov": PERSON}, admins={PERSON.id})
+
+
 async def test_summary_command_sends_text_and_two_documents(repo, report_dir):
     portfolio = Portfolio(
         epics=[_epic(end=datetime(2026, 1, 1))],
@@ -206,28 +255,73 @@ async def test_summary_command_sends_text_and_two_documents(repo, report_dir):
         project_names={"p1": "Проект"},
     )
     service, transport = _make_service(
-        repo, FakeTasks(), portfolio=FakePortfolio(portfolio), report_dir=report_dir
+        repo, _linked_admin_tasks(), portfolio=FakePortfolio(portfolio),
+        report_dir=report_dir,
     )
+    await service.on_start("telegram", _sender())
 
-    await service.on_command("telegram", "100", "summary", "")
+    await service.on_command("telegram", _sender(), "summary", "")
 
-    assert "Собираю сводку" in transport.sent[0][1].text
+    assert "Собираю сводку" in transport.texts
     assert "Сводка по проектам" in transport.sent[-1][1].text
     assert [doc.filename.rsplit(".", 1)[1] for _, doc in transport.sent_docs] == ["html", "csv"]
     assert len(list(report_dir.iterdir())) == 3  # html + csv + json
+
+
+async def test_summary_refused_for_non_admin(repo, report_dir):
+    """Сводка по всему портфелю — управленческая информация."""
+    portfolio = Portfolio(epics=[_epic(end=datetime(2026, 1, 1))], project_names={"p1": "П"})
+    tasks = FakeTasks(by_telegram={"ivanov": PERSON})  # admins пуст
+    service, transport = _make_service(
+        repo, tasks, portfolio=FakePortfolio(portfolio), report_dir=report_dir
+    )
+    await service.on_start("telegram", _sender())
+
+    await service.on_command("telegram", _sender(), "summary", "")
+
+    assert "только администраторам" in transport.texts
+    assert transport.sent_docs == []
+    assert not report_dir.exists()  # портфель даже не собирался
+
+
+async def test_summary_requires_link_first(repo, report_dir):
+    service, transport = _make_service(
+        repo, FakeTasks(), portfolio=FakePortfolio(), report_dir=report_dir
+    )
+
+    await service.on_command("telegram", _sender(), "summary", "")
+
+    assert "/start" in transport.texts
+    assert transport.sent_docs == []
+
+
+async def test_admin_rights_checked_on_every_call(repo, report_dir):
+    """Проверка живая: исключение из группы должно действовать сразу."""
+    portfolio = Portfolio(epics=[_epic(end=datetime(2026, 1, 1))], project_names={"p1": "П"})
+    tasks = _linked_admin_tasks()
+    service, _ = _make_service(
+        repo, tasks, portfolio=FakePortfolio(portfolio), report_dir=report_dir
+    )
+    await service.on_start("telegram", _sender())
+
+    await service.on_command("telegram", _sender(), "summary", "")
+    await service.on_command("telegram", _sender(), "summary", "")
+
+    assert tasks.admin_checks == [PERSON.id, PERSON.id]
 
 
 async def test_summary_falls_back_to_paths_without_document_support(repo, report_dir):
     portfolio = Portfolio(epics=[_epic(end=datetime(2026, 1, 1))], project_names={"p1": "П"})
     service, transport = _make_service(
         repo,
-        FakeTasks(),
+        _linked_admin_tasks(),
         portfolio=FakePortfolio(portfolio),
         report_dir=report_dir,
         transport=TextOnlyTransport(),
     )
+    await service.on_start("telegram", _sender())
 
-    await service.on_command("telegram", "100", "summary", "")
+    await service.on_command("telegram", _sender(), "summary", "")
 
     assert transport.sent_docs == []
     assert "Файлы отчёта сохранены" in transport.texts
@@ -288,11 +382,15 @@ async def test_summary_to_all_collects_data_once(repo, report_dir):
 
 async def test_unknown_command_lists_available(repo):
     service, transport = _make_service(repo, FakeTasks())
-    await service.on_command("telegram", "100", "wat", "")
+    await service.on_command("telegram", _sender(), "wat", "")
     assert "/summary" in transport.texts
 
 
-async def test_start_command_routes_to_welcome(repo):
-    service, transport = _make_service(repo, FakeTasks())
-    await service.on_command("telegram", "100", "start", "")
-    assert "email" in transport.texts
+async def test_start_command_routes_to_linking(repo):
+    """/start как команда идёт тем же путём, что и кнопка «Начать»."""
+    service, transport = _make_service(repo, FakeTasks(by_telegram={"ivanov": PERSON}))
+
+    await service.on_command("telegram", _sender(), "start", "")
+
+    assert repo.get(transport="telegram", chat_id="100") is not None
+    assert "привязаны" in transport.texts

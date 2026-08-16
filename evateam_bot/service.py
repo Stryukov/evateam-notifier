@@ -12,12 +12,11 @@ from datetime import datetime
 from .core import formatting, summary_text
 from .core.deadlines import find_overdue
 from .core.digest import build_digest
-from .core.messages import OutgoingDocument, OutgoingMessage
+from .core.messages import OutgoingDocument, OutgoingMessage, Sender
 from .core.models import Person, Summary
-from .core.onboarding import handle_person_query
 from .core.summary import SummaryOptions, build_summary
 from .evateam.portfolio import EvaTeamPortfolio
-from .evateam.tasks import EvaTeamTasks
+from .evateam.tasks import DEFAULT_ADMIN_GROUP, EvaTeamTasks
 from .reports import ReportFiles, write_report_files
 from .storage.repository import UserRepository
 from .transports.base import BotTransport, TransportName
@@ -35,6 +34,7 @@ class BotService:
         portfolio_api: EvaTeamPortfolio | None = None,
         summary_options: SummaryOptions | None = None,
         report_dir: str = "data/reports",
+        admin_group: str = DEFAULT_ADMIN_GROUP,
     ) -> None:
         self._transports = transports
         self._tasks = tasks_api
@@ -42,8 +42,7 @@ class BotService:
         self._portfolio = portfolio_api
         self._summary_options = summary_options or SummaryOptions()
         self._report_dir = report_dir
-        # Кандидаты для подтверждения, ключ (transport, chat_id).
-        self._pending: dict[tuple[str, str], dict[str, Person]] = {}
+        self._admin_group = admin_group
         for transport in transports.values():
             transport.set_handler(self)
 
@@ -52,54 +51,67 @@ class BotService:
 
     # ---------- UpdateHandler ----------
 
-    async def on_start(self, transport: TransportName, chat_id: str) -> None:
-        await self._transport(transport).send_message(
-            chat_id, formatting.welcome_message()
-        )
+    async def on_start(self, transport: TransportName, sender: Sender) -> None:
+        """Привязка по Telegram, указанному в карточке EvaTeam.
 
-    async def on_text(self, transport: TransportName, chat_id: str, text: str) -> None:
-        people = await self._tasks.find_person(text)
-        result = handle_person_query(text, people)
-        if result.candidates:
-            self._pending[(transport, chat_id)] = {p.id: p for p in result.candidates}
-        await self._transport(transport).send_message(chat_id, result.message)
-
-    async def on_action(self, transport: TransportName, chat_id: str, action: str) -> None:
+        Ввода email нет намеренно: он позволял привязаться к любому сотруднику и
+        читать чужие задачи. Личность подтверждает запись в EvaTeam.
+        """
         tr = self._transport(transport)
-        if action == formatting.ACTION_REJECT:
-            self._pending.pop((transport, chat_id), None)
-            await tr.send_message(chat_id, formatting.rejected_message())
+        person = await self._tasks.find_person_by_telegram(sender.username, sender.user_id)
+        if person is None:
+            logger.info(
+                "Отказ в привязке: chat=%s username=%s", sender.chat_id, sender.username
+            )
+            await tr.send_message(sender.chat_id, formatting.access_denied_message())
             return
 
-        if action.startswith(formatting.ACTION_CONFIRM_PREFIX):
-            person_id = action[len(formatting.ACTION_CONFIRM_PREFIX):]
-            person = self._pending.get((transport, chat_id), {}).get(person_id)
-            if person is None:
-                # Кандидаты потерялись (перезапуск) — попросим ввести заново.
-                await tr.send_message(chat_id, formatting.welcome_message())
-                return
-            self._repo.link(
-                transport=transport,
-                chat_id=chat_id,
-                person_id=person.id,
-                person_name=person.name,
-            )
-            self._pending.pop((transport, chat_id), None)
-            await tr.send_message(chat_id, formatting.linked_message(person))
+        self._repo.link(
+            transport=transport,
+            chat_id=sender.chat_id,
+            person_id=person.id,
+            person_name=person.name,
+        )
+        await tr.send_message(sender.chat_id, formatting.linked_message(person))
+
+    async def on_text(self, transport: TransportName, sender: Sender, text: str) -> None:
+        await self._transport(transport).send_message(
+            sender.chat_id, formatting.welcome_message()
+        )
+
+    async def on_action(
+        self, transport: TransportName, sender: Sender, action: str
+    ) -> None:
+        # Кнопок в онбординге больше нет; метод оставлен для будущих сценариев.
+        return
 
     async def on_command(
-        self, transport: TransportName, chat_id: str, command: str, args: str
+        self, transport: TransportName, sender: Sender, command: str, args: str
     ) -> None:
+        tr = self._transport(transport)
         if command == "summary":
-            await self.send_summary(transport, chat_id)
+            await self._handle_summary_command(transport, sender)
         elif command in {"start", "help"}:
-            await self._transport(transport).send_message(
-                chat_id, formatting.welcome_message()
-            )
+            await self.on_start(transport, sender)
         else:
-            await self._transport(transport).send_message(
-                chat_id, formatting.unknown_command_message(command)
+            await tr.send_message(
+                sender.chat_id, formatting.unknown_command_message(command)
             )
+
+    async def _handle_summary_command(
+        self, transport: TransportName, sender: Sender
+    ) -> None:
+        """Сводка по всему портфелю — только для группы Admins в EvaTeam."""
+        tr = self._transport(transport)
+        link = self._repo.get(transport=transport, chat_id=sender.chat_id)
+        if link is None:
+            await tr.send_message(sender.chat_id, formatting.welcome_message())
+            return
+        if not await self._tasks.is_admin(link.person_id, self._admin_group):
+            logger.info("Отказ в /summary: chat=%s person=%s", sender.chat_id, link.person_id)
+            await tr.send_message(sender.chat_id, formatting.not_admin_message())
+            return
+        await self.send_summary(transport, sender.chat_id)
 
     # ---------- сводка по проектам ----------
 

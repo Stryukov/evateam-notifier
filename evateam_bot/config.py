@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     evateam_verify_ssl: str = Field(default="true")
     # admin_mode: сервис-аккаунт (в группе Admins) видит задачи всех сотрудников
     evateam_admin_mode: bool = Field(default=True)
+    # Код группы EvaTeam, участникам которой доступна сводка по проектам (/summary).
+    evateam_admin_group: str = Field(default="Admins")
 
     # Telegram
     telegram_bot_token: str = Field(default="")
@@ -52,6 +54,8 @@ class Settings(BaseSettings):
     deadline_check_time: str = Field(default="09:30")
     # Вечернее напоминание: закрыть выполненное, подвинуть сроки.
     evening_check_time: str = Field(default="16:00")
+    # Дни рассылок в формате cron (APScheduler): mon-fri, mon-sun, "mon,wed,fri".
+    schedule_days: str = Field(default="mon-fri")
 
     # Хранилище
     db_path: str = Field(default="data/bot.db")

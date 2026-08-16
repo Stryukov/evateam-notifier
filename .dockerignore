@@ -1,0 +1,26 @@
+# Секреты — пробрасываются через env_file, в образ не кладём.
+.env
+*.env
+!.env.example
+
+# Локальное окружение и артефакты
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# База и отчёты — монтируются томом
+data/
+
+# История и документация в образе не нужны
+.git/
+.gitignore
+.github/
+tests/
+*.md

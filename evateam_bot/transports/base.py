@@ -10,7 +10,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Protocol, runtime_checkable
 
-from ..core.messages import OutgoingDocument, OutgoingMessage
+from ..core.messages import OutgoingDocument, OutgoingMessage, Sender
 
 # Имя транспорта используется как ключ в БД (users.transport).
 TransportName = str
@@ -18,20 +18,24 @@ TransportName = str
 
 @runtime_checkable
 class UpdateHandler(Protocol):
-    """Обработчик входящих событий. Реализуется в service.BotService."""
+    """Обработчик входящих событий. Реализуется в service.BotService.
 
-    async def on_start(self, transport: TransportName, chat_id: str) -> None: ...
+    Передаём `Sender`, а не голый `chat_id`: доступ к боту проверяется по личности
+    отправителя, и она должна доезжать до логики.
+    """
+
+    async def on_start(self, transport: TransportName, sender: Sender) -> None: ...
 
     async def on_text(
-        self, transport: TransportName, chat_id: str, text: str
+        self, transport: TransportName, sender: Sender, text: str
     ) -> None: ...
 
     async def on_action(
-        self, transport: TransportName, chat_id: str, action: str
+        self, transport: TransportName, sender: Sender, action: str
     ) -> None: ...
 
     async def on_command(
-        self, transport: TransportName, chat_id: str, command: str, args: str
+        self, transport: TransportName, sender: Sender, command: str, args: str
     ) -> None:
         """Команда вида `/summary`. `command` — нормализован: без слэша, в нижнем
         регистре, без `@botname`."""
