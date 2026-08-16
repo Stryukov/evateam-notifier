@@ -52,7 +52,21 @@ TASK_FIELDS = [
     GANTT_END_FIELD,
 ]
 
-PERSON_FIELDS = ["id", "name", "login", "email", "code"]
+# `telegram` и `rg_member_of` НЕ приходят в fields:["**"] — как и пользовательские поля.
+# Запрашиваем явно. `telegram` хранится ссылкой: "https://t.me/strk0v" либо
+# "https://t.me/212737863" (числовой id) — EvaTeam сама дописывает схему.
+PERSON_FIELDS = [
+    "id",
+    "name",
+    "login",
+    "email",
+    "code",
+    "telegram",
+    "rg_member_of.code",
+]
+
+#: Код группы EvaTeam, дающей доступ к управленческой сводке.
+DEFAULT_ADMIN_GROUP = "Admins"
 
 # Статусы, которые считаем «закрытыми» и не показываем в напоминаниях.
 CLOSED_STATUS_TYPE = "CLOSED"
@@ -132,6 +146,37 @@ def _extract_items(result: Any) -> list[dict[str, Any]]:
     return []
 
 
+def normalize_telegram(value: Any) -> str | None:
+    """Привести Telegram-идентификатор к «хвосту» для сравнения.
+
+    EvaTeam хранит поле ссылкой и сама дописывает схему, поэтому в карточке лежит
+    `https://t.me/strk0v` или `https://t.me/212737863`. Сводим к одному виду обе
+    стороны сравнения:
+
+        https://t.me/Strk0v  ->  strk0v
+        t.me/strk0v          ->  strk0v
+        @strk0v              ->  strk0v
+        212737863            ->  212737863
+
+    Пустое значение даёт None — иначе сотрудник с незаполненным полем совпал бы
+    с отправителем без username.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    for prefix in ("https://", "http://"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix):]
+    # Хост отбрасываем вместе с ним самим: у «https://t.me/» хвоста нет вовсе,
+    # и вернуть «t.me» было бы мусорным идентификатором.
+    for host in ("t.me", "telegram.me"):
+        if text.lower() == host or text.lower().startswith(host + "/"):
+            text = text[len(host):].lstrip("/")
+            break
+    text = text.lstrip("@").split("?", 1)[0].split("/", 1)[0].strip()
+    return text.lower() or None
+
+
 async def kanban_by_project(
     client: EvaTeamClient, items: list[dict[str, Any]]
 ) -> dict[str, str]:
@@ -193,6 +238,46 @@ class EvaTeamTasks:
 
         # Фолбэк: поиск по имени (например, "Иванов").
         return await self._list_people([["name", "LIKE", f"%{query}%"]])
+
+    async def find_person_by_telegram(
+        self, username: str | None, user_id: str | None = None
+    ) -> Person | None:
+        """Сотрудник, чей Telegram указан в карточке EvaTeam. None — доступа нет.
+
+        Сверяем на клиенте: серверный `LIKE "%имя%"` дал бы ложные совпадения
+        («ivan» внутри «ivanov», «212» внутри «2127378»). Людей меньше сотни,
+        одного запроса достаточно.
+        """
+        wanted = {normalize_telegram(value) for value in (username, user_id)}
+        wanted.discard(None)
+        if not wanted:
+            return None
+
+        result = await self._client.call(
+            METHOD_PERSON_LIST, kwargs={"fields": PERSON_FIELDS}
+        )
+        for item in _extract_items(result):
+            if normalize_telegram(item.get("telegram")) in wanted:
+                return parse_person(item)
+        return None
+
+    async def is_admin(self, person_id: str, group_code: str = DEFAULT_ADMIN_GROUP) -> bool:
+        """Состоит ли сотрудник в группе EvaTeam (по умолчанию Admins).
+
+        Проверяется в момент вызова, а не при привязке: иначе исключение из группы
+        не подействовало бы до перепривязки.
+        """
+        result = await self._client.call(
+            METHOD_PERSON_LIST,
+            kwargs={
+                "filter": [
+                    ["id", "==", person_id],
+                    ["rg_member_of.code", "==", group_code],
+                ],
+                "fields": ["id"],
+            },
+        )
+        return bool(_extract_items(result))
 
     async def _list_people(self, filt: list[list]) -> list[Person]:
         result = await self._client.call(
